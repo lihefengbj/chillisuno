@@ -6,7 +6,6 @@ window.Clerk 会话令牌调用 studio-api.suno.ai 获得（与官网前端同�
 """
 
 import json
-import shutil
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QStandardPaths, QTimer, QUrl, Signal
@@ -77,7 +76,6 @@ class AuthService(QObject):
             QStandardPaths.StandardLocation.AppDataLocation
         )
         profile_dir = Path(data_dir) / "webprofile"
-        self._migrate_profile_dir(profile_dir)
         self.profile = QWebEngineProfile("chillisuno", self)
         self.profile.setPersistentStoragePath(str(profile_dir))
         self.profile.setPersistentCookiesPolicy(
@@ -126,23 +124,6 @@ class AuthService(QObject):
         self._probe.runJavaScript(_FETCH_SESSION_JS, self._on_probe_result)
 
     # ---- 内部 ----
-
-    @staticmethod
-    def _migrate_profile_dir(new_dir: Path) -> None:
-        """旧版本登录态目录（growmusic）自动迁移到 chillisuno。"""
-        if new_dir.exists():
-            return
-        candidates = [
-            Path.home() / "AppData/Roaming/growmusic/GROW MUSIC/webprofile",
-            Path.home() / "AppData/Roaming/growmusic/webprofile",
-            Path.home() / "AppData/Roaming/grow-music/webprofile",
-            Path.home() / "AppData/Roaming/GROW MUSIC/webprofile",
-        ]
-        for old in candidates:
-            if old.exists():
-                new_dir.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(old), str(new_dir))
-                return
 
     def _on_probe_result(self, raw) -> None:
         try:
