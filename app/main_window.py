@@ -1,0 +1,197 @@
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QPushButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from app.auth_service import AuthService
+from app import theme
+
+
+def _placeholder_page(text: str) -> QWidget:
+    page = QWidget()
+    layout = QVBoxLayout(page)
+    label = QLabel(text)
+    label.setObjectName("placeholder")
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    layout.addWidget(label)
+    return page
+
+
+class MainWindow(QMainWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("chillisuno — Suno 桌面助手")
+        self.resize(1180, 760)
+        self.setStyleSheet(theme.QSS)
+
+        self.auth = AuthService(self)
+        self.auth.session_changed.connect(self._on_session_changed)
+
+        # ---------- 侧边栏 ----------
+        sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(220)
+        side_layout = QVBoxLayout(sidebar)
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        side_layout.setSpacing(0)
+
+        brand_row = QHBoxLayout()
+        brand_row.setContentsMargins(20, 20, 20, 0)
+        brand_row.setSpacing(10)
+        logo_icon = QLabel()
+        logo_icon.setPixmap(
+            QPixmap("assets/logo.png").scaled(
+                34,
+                34,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        logo_icon.setFixedSize(34, 34)
+        brand_row.addWidget(logo_icon)
+        brand_row.addSpacing(0)
+
+        logo = QLabel("chillisuno")
+        logo.setObjectName("logo")
+        brand_row.addWidget(logo)
+        brand_row.addStretch(1)
+
+        logo_sub = QLabel("Suno 桌面助手")
+        logo_sub.setObjectName("logoSub")
+
+        nav = QListWidget()
+        nav.setObjectName("nav")
+        for name in ("账户", "曲库", "下载中心", "上传", "设置"):
+            QListWidgetItem(name, nav)
+        nav.setCurrentRow(0)
+        nav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        side_layout.addLayout(brand_row)
+        side_layout.addWidget(logo_sub)
+        side_layout.addWidget(nav, 1)
+
+        # ---------- 页面栈 ----------
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self._build_account_page())
+        self.pages.addWidget(_placeholder_page("曲库 · M2 开发中"))
+        self.pages.addWidget(_placeholder_page("下载中心 · M3 开发中"))
+        self.pages.addWidget(_placeholder_page("上传 · M4 开发中"))
+        self.pages.addWidget(_placeholder_page("设置 · 待实现"))
+
+        nav.currentRowChanged.connect(self.pages.setCurrentIndex)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(sidebar)
+        body.addWidget(self.pages, 1)
+        container = QWidget()
+        container.setLayout(body)
+        self.setCentralWidget(container)
+
+    # ---------- 账户页 ----------
+
+    def _build_account_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(32, 28, 32, 28)
+        layout.setSpacing(16)
+
+        title = QLabel("账户")
+        title.setObjectName("pageTitle")
+        desc = QLabel("管理你的 Suno 账号会话与额度")
+        desc.setObjectName("pageDesc")
+        layout.addWidget(title)
+        layout.addWidget(desc)
+
+        # 账户卡片
+        card = QFrame()
+        card.setObjectName("card")
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(24, 24, 24, 24)
+        card_layout.setSpacing(16)
+
+        self.avatar = QLabel("–")
+        self.avatar.setObjectName("avatar")
+        self.avatar.setFixedSize(52, 52)
+        self.avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        info = QVBoxLayout()
+        info.setSpacing(4)
+        self.name_label = QLabel("未登录")
+        self.name_label.setObjectName("accountName")
+        self.status_label = QLabel("登录后可管理曲库与下载")
+        self.status_label.setObjectName("accountSub")
+        info.addWidget(self.name_label)
+        info.addWidget(self.status_label)
+
+        credits_box = QVBoxLayout()
+        credits_box.setSpacing(2)
+        self.credits_value = QLabel("—")
+        self.credits_value.setObjectName("creditsValue")
+        self.credits_value.setAlignment(Qt.AlignmentFlag.AlignRight)
+        credits_label = QLabel("剩余额度")
+        credits_label.setObjectName("creditsLabel")
+        credits_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        credits_box.addWidget(self.credits_value)
+        credits_box.addWidget(credits_label)
+
+        card_layout.addWidget(self.avatar)
+        card_layout.addLayout(info, 1)
+        card_layout.addLayout(credits_box)
+        layout.addWidget(card)
+
+        # 操作按钮
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+        self.login_btn = QPushButton("登录 Suno")
+        self.login_btn.setObjectName("primary")
+        self.logout_btn = QPushButton("退出登录")
+        self.logout_btn.setObjectName("danger")
+        self.refresh_btn = QPushButton("刷新额度")
+        btn_row.addWidget(self.login_btn)
+        btn_row.addWidget(self.refresh_btn)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.logout_btn)
+        layout.addLayout(btn_row)
+
+        layout.addStretch(1)
+
+        self.login_btn.clicked.connect(self.auth.login)
+        self.logout_btn.clicked.connect(self.auth.logout)
+        self.refresh_btn.clicked.connect(self.auth.refresh_credits)
+        self._update_account_ui({"logged_in": False})
+        return page
+
+    def _on_session_changed(self, info: dict) -> None:
+        self._update_account_ui(info)
+
+    def _update_account_ui(self, info: dict) -> None:
+        if info.get("logged_in"):
+            email = info.get("email") or "Suno 用户"
+            self.name_label.setText(email)
+            self.status_label.setText("● 已连接")
+            self.status_label.setStyleSheet("color: #3FB950; font-size: 13px;")
+            self.avatar.setText(email[0].upper())
+            credits = info.get("credits")
+            self.credits_value.setText(str(credits) if credits is not None else "…")
+            self.login_btn.setEnabled(False)
+            self.logout_btn.setEnabled(True)
+        else:
+            self.name_label.setText("未登录")
+            self.status_label.setText("登录后可管理曲库与下载")
+            self.status_label.setStyleSheet("")
+            self.avatar.setText("–")
+            self.credits_value.setText("—")
+            self.login_btn.setEnabled(True)
+            self.logout_btn.setEnabled(False)
