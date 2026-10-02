@@ -73,7 +73,7 @@ def main() -> None:
     )
     icon.save("assets/icon.png")
     logo.save("assets/icon.ico")  # Windows exe 图标
-    print("assets/logo.png, assets/icon.png, assets/icon.ico 已生成")
+    print("generated: assets/logo.png, assets/icon.png, assets/icon.ico")
 
 
 if __name__ == "__main__":
