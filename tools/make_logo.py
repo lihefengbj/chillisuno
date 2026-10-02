@@ -1,7 +1,7 @@
 """生成 chillisuno 应用 Logo：圆角方形渐变底 + 声波柱。
 
 运行：.venv\\Scripts\\python.exe tools/make_logo.py
-产物：assets/logo.png（512px）、assets/icon.png（256px）
+产物：assets/logo.png（512px）、assets/icon.png（256px）、assets/icon.ico
 """
 
 import math
@@ -72,7 +72,8 @@ def main() -> None:
         Qt.TransformationMode.SmoothTransformation,
     )
     icon.save("assets/icon.png")
-    print("assets/logo.png, assets/icon.png 已生成")
+    logo.save("assets/icon.ico")  # Windows exe 图标
+    print("assets/logo.png, assets/icon.png, assets/icon.ico 已生成")
 
 
 if __name__ == "__main__":
