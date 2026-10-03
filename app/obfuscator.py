@@ -15,8 +15,10 @@ def _read_audio(path: str | Path) -> tuple[np.ndarray, int]:
     if path.suffix.lower() == ".mp3":
         import miniaudio
 
-        decoded = miniaudio.decode_file(
-            str(path), output_format=miniaudio.SampleFormat.FLOAT32
+        # decode_file 在 Windows 上对中文/非 ASCII 路径会返回 -1，
+        # 这里直接喂字节给 miniaudio.decode，绕开文件名编码问题。
+        decoded = miniaudio.decode(
+            path.read_bytes(), output_format=miniaudio.SampleFormat.FLOAT32
         )
         samples = np.asarray(decoded.samples, dtype=np.float32).reshape(
             decoded.num_frames, decoded.nchannels
