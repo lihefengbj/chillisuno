@@ -159,7 +159,7 @@ class AuthService(QObject):
             self._on_token, Qt.ConnectionType.QueuedConnection
         )
         self._interceptor.hostSeen.connect(
-            lambda host, rtype: log.info("intercept host: %s (%s)", host, rtype),
+            lambda host, rtype: log.debug("intercept host: %s (%s)", host, rtype),
             Qt.ConnectionType.QueuedConnection,
         )
         self.profile.setUrlRequestInterceptor(self._interceptor)
