@@ -129,13 +129,15 @@ class MainWindow(QMainWindow):
         # ---------- 页面栈 ----------
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_account_page())
-        self.pages.addWidget(LibraryPage(self.api, self.storage, self.player))
+        self.library_page = LibraryPage(self.api, self.storage, self.player)
+        self.pages.addWidget(self.library_page)
         self.pages.addWidget(_placeholder_page("下载中心 · M3 开发中"))
         self.pages.addWidget(_placeholder_page("上传 · M4 开发中"))
         self.pages.addWidget(_placeholder_page("设置 · 待实现"))
         self.pages.addWidget(LogPage())
 
         nav.currentRowChanged.connect(self.pages.setCurrentIndex)
+        nav.currentRowChanged.connect(self._on_nav_changed)
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -152,6 +154,13 @@ class MainWindow(QMainWindow):
         container = QWidget()
         container.setLayout(body)
         self.setCentralWidget(container)
+
+    def _on_nav_changed(self, row: int) -> None:
+        # 播放器只在曲库页显示；其他页面隐藏。
+        if row == 1 and self.player.is_active():
+            self.player.show()
+        else:
+            self.player.hide()
 
     # ---------- 账户页 ----------
 

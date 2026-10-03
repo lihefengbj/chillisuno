@@ -257,6 +257,10 @@ class PlayerBar(QWidget):
         )
         self._load_current()
 
+    def is_active(self) -> bool:
+        """当前是否已载入歌曲（用于决定播放条在曲库页是否显示）。"""
+        return self._index >= 0 and bool(self._playlist)
+
     # ---- 内部 ----
 
     def _load_current(self) -> None:
