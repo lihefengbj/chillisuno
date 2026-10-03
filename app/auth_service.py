@@ -4,10 +4,10 @@
 登录态由持久化 QWebEngineProfile 保持。
 
 会话令牌获取（2026-10-03 起改用此方案）：
-新版 Suno 页面不再暴露 window.Clerk，改为用 QWebEngineUrlRequestInterceptor
-拦截页面自身发往 studio-api.suno.ai 的请求，从请求头捕获 Authorization
-令牌（登录后页面自己会持续发 API 请求），再用该令牌在页面上下文中调用
-billing 接口获取额度。该方案完全跟随官网行为，不依赖页面全局对象。
+新版 Suno 页面不暴露 window.Clerk，且 Chromium 拦截器会过滤
+Authorization 敏感头（无法直接捕获）。改为在页面上下文中调用 Clerk
+认证接口 auth.suno.com/v1/client（页面自身就在调，CORS/cookie 天然可用），
+从响应中取会话 JWT，再调 studio-api-prod.suno.com 的 billing 接口取额度。
 """
 
 import json
@@ -29,7 +29,8 @@ from app.logger import get_logger
 log = get_logger("auth")
 
 SUNO_HOME = "https://suno.com"
-BILLING_API = "https://studio-api.suno.ai/api/billing/info/"
+CLERK_CLIENT_API = "https://auth.suno.com/v1/client"
+BILLING_API = "https://studio-api-prod.suno.com/api/billing/info/"
 
 
 def _chrome_like_ua(profile: QWebEngineProfile) -> str:
@@ -72,15 +73,30 @@ class TokenInterceptor(QWebEngineUrlRequestInterceptor):
 
 # 注意：QWebEnginePage.runJavaScript 不会等待 Promise 完成，
 # 因此分两段执行：启动任务把结果写入 window.__chilliResult，延迟后再读取。
-_START_BILLING_JS = """
+#
+# 流程：auth.suno.com/v1/client（带 cookie）-> 会话 JWT -> billing 额度。
+_START_SESSION_JS = (
+    """
 window.__chilliResult = null;
 (async () => {
   const dbg = {url: location.href, title: document.title || ""};
   try {
     if (dbg.title.toLowerCase().includes("too many"))
       throw {rate_limited: true};
+    const cr = await fetch("%s", { credentials: "include" });
+    if (!cr.ok) throw {reason: "clerk-http-" + cr.status};
+    const client = await cr.json();
+    const sessions = (client && client.response && client.response.sessions)
+                     || (client && client.sessions) || [];
+    let jwt = null;
+    for (const s of sessions) {
+      const t = s.last_active_token && s.last_active_token.jwt;
+      if (t) { jwt = t; break; }
+    }
+    if (!jwt)
+      throw {reason: sessions.length ? "no-jwt-in-session" : "no-session"};
     const resp = await fetch("%s", {
-      headers: { "Authorization": "Bearer %s" }
+      headers: { "Authorization": "Bearer " + jwt }
     });
     if (!resp.ok)
       throw {reason: "billing-http-" + resp.status};
@@ -98,6 +114,8 @@ window.__chilliResult = null;
 })();
 "started"
 """
+    % (CLERK_CLIENT_API, BILLING_API)
+)
 
 _READ_RESULT_JS = "window.__chilliResult"
 
@@ -188,15 +206,10 @@ class AuthService(QObject):
         self.session_changed.emit(self._info)
 
     def refresh_credits(self) -> None:
-        if self._token is None:
-            # 还没有令牌：确保有页面在跑，让页面自己发 API 请求以便捕获
-            self._ensure_page()
-            if not self._info.get("logged_in"):
-                return
         page = self._active_page()
-        if page is None or self._token is None:
+        if page is None:
             return
-        page.runJavaScript(_START_BILLING_JS % (BILLING_API, self._token))
+        page.runJavaScript(_START_SESSION_JS)
         QTimer.singleShot(1500, lambda: self._read_result(page))
 
     # ---- 内部 ----
@@ -268,12 +281,11 @@ class AuthService(QObject):
             if self._dialog and self._dialog.isVisible():
                 log.info("login confirmed, close dialog")
                 self._dialog.accept()
-        elif info.get("reason"):
-            # 令牌失效等
-            log.warning("billing failed: %s", info.get("reason"))
-            if str(info.get("reason", "")).endswith(("401", "403")):
-                self._token = None
-                self._set_state({"logged_in": False})
+        else:
+            reason = info.get("reason") or info.get("error")
+            log.info("not logged in: %s dbg=%s", reason, info.get("dbg"))
+            if reason in ("no-session", "no-jwt-in-session"):
+                self._set_state({"logged_in": False, "credits": None})
 
     def _set_state(self, state: dict) -> None:
         merged = {"logged_in": False, "email": None, "credits": None}
