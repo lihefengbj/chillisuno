@@ -1,9 +1,8 @@
 """曲库页：作品列表、搜索、收藏、播放。"""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QSize, QTimer, QUrl, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
-from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -184,7 +183,7 @@ class LibraryPage(QWidget):
             item = QListWidgetItem(self.list)
             card = ClipCard(clip, is_fav)
             card.set_active(clip["id"] == self._current_id)
-            item.setSizeHint(card.sizeHint())
+            item.setSizeHint(QSize(self.list.viewport().width() or 300, 72))
             self.list.addItem(item)
             self.list.setItemWidget(item, card)
             self._cards.append(card)
@@ -200,6 +199,26 @@ class LibraryPage(QWidget):
             )
             self._load_cover(card)
         self.list.viewport().update()
+        QTimer.singleShot(0, self._sync_item_sizes)
+
+    def _sync_item_sizes(self) -> None:
+        width = self.list.viewport().width()
+        if width <= 0:
+            return
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            card = self.list.itemWidget(item)
+            if not card:
+                continue
+            height = card.layout().totalHeightForWidth(width)
+            if height <= 0:
+                height = card.sizeHint().height()
+            item.setSizeHint(QSize(width, max(height, 72)))
+        self.list.doItemsLayout()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._sync_item_sizes)
 
     def _load_cover(self, card: ClipCard) -> None:
         url = card.clip.get("image_url")
