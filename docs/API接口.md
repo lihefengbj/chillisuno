@@ -5,14 +5,22 @@
 
 ## 认证
 
-Suno 使用 Clerk 认证。登录后在 suno.com 页面上下文中：
+Suno 使用 Clerk 认证，但页面**不暴露 window.Clerk 全局对象**。
+在页面上下文中调用 Clerk 认证接口取会话 JWT：
 
 ```js
-const token = await window.Clerk.session.getToken();
-// 之后所有请求带 Header: Authorization: Bearer <token>
+const r = await fetch("https://auth.suno.com/v1/client", {credentials:"include"});
+const client = await r.json();
+const jwt = client.response.sessions[0].last_active_token.jwt;
+// 之后所有请求带 Header: Authorization: Bearer <jwt>
 ```
 
-令牌有有效期，每次调用前重新 `getToken()` 即可，Clerk SDK 会自动刷新。
+JWT 有有效期（约 1 分钟级），每次调用前重新走一遍该流程即可。
+
+> 备注：Chromium 请求拦截器会过滤 Authorization 头，无法在 Qt 侧
+> 直接捕获令牌，必须走页面内 JS。真实 API 域名为
+> `studio-api-prod.suno.com`（2026-10 实测），`studio-api.prod.suno.com`
+> 用于媒体流。
 
 ## 接口清单（按里程碑使用）
 
@@ -20,7 +28,8 @@ const token = await window.Clerk.session.getToken();
 
 | 接口 | 说明 |
 |---|---|
-| `GET https://studio-api.suno.ai/api/billing/info/` | 账单与额度，`total_credits_left` 为剩余额度 |
+| `GET https://auth.suno.com/v1/client` | Clerk 会话，取 JWT |
+| `GET https://studio-api-prod.suno.com/api/billing/info/` | 账单与额度，`total_credits_left` 为剩余额度 |
 
 用户信息取自 `window.Clerk.user`（邮箱、头像、用户名）。
 
