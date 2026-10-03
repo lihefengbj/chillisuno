@@ -78,6 +78,42 @@ window.__chilliToken = null;
 
 _READ_TOKEN_JS = "window.__chilliToken"
 
+_START_REQUEST_JS = (
+    """
+window.__chilliReq = null;
+(async () => {
+  try {
+    const cr = await fetch("%s", { credentials: "include" });
+    if (!cr.ok) throw {reason: "clerk-http-" + cr.status};
+    const client = await cr.json();
+    const sessions = (client && client.response && client.response.sessions)
+                     || (client && client.sessions) || [];
+    let jwt = null;
+    for (const s of sessions) {
+      const t = s.last_active_token && s.last_active_token.jwt;
+      if (t) { jwt = t; break; }
+    }
+    if (!jwt) throw {reason: "no-session"};
+    const r = await fetch("%s", {
+      method: "%s",
+      headers: { "Authorization": "Bearer " + jwt, "Content-Type": "application/json" },
+      body: %s
+    });
+    const text = await r.text();
+    window.__chilliReq = JSON.stringify({ok: r.ok, status: r.status, text: text});
+  } catch (e) {
+    window.__chilliReq = JSON.stringify({
+      ok: false, status: 0, text: "",
+      error: (e && (e.reason || e.message)) || String(e)
+    });
+  }
+})();
+"started"
+"""
+)
+
+_READ_REQUEST_JS = "window.__chilliReq"
+
 
 class SunoApi(QObject):
     """通过 AuthService 的页面上下文执行接口调用。"""
@@ -134,6 +170,54 @@ class SunoApi(QObject):
         except RuntimeError:
             QTimer.singleShot(
                 500, lambda: self._wait_token(page, callback, n + 1)
+            )
+
+    def request_json(self, method, url, body, callback, attempt: int = 0) -> None:
+        """在页面上下文发起 JSON 请求，规避 Python TLS 指纹被 Suno 拦截。
+
+        callback 收到 dict：{ok, status, text}；非 2xx 时 ok=False。
+        """
+        page = self.auth.acquire_page()
+        if page is None:
+            if attempt >= 40:
+                log.warning("request page never ready")
+                callback({"ok": False, "status": 0, "text": "no-page"})
+                return
+            QTimer.singleShot(
+                800, lambda: self.request_json(
+                    method, url, body, callback, attempt + 1
+                )
+            )
+            return
+        body_js = "undefined" if body is None else json.dumps(body)
+        page.runJavaScript(
+            _START_REQUEST_JS % (CLERK_CLIENT_API, url, method.upper(), body_js)
+        )
+        self._wait_request(page, callback, 0)
+
+    def _wait_request(self, page, callback, n: int) -> None:
+        if n > 20:
+            log.warning("request timeout")
+            callback({"ok": False, "status": 0, "text": "timeout"})
+            return
+
+        def read(raw) -> None:
+            if raw in (None, "", "null"):
+                QTimer.singleShot(
+                    500, lambda: self._wait_request(page, callback, n + 1)
+                )
+                return
+            try:
+                payload = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                payload = {"ok": False, "status": 0, "text": raw}
+            callback(payload)
+
+        try:
+            page.runJavaScript(_READ_REQUEST_JS, read)
+        except RuntimeError:
+            QTimer.singleShot(
+                500, lambda: self._wait_request(page, callback, n + 1)
             )
 
     # ---- 内部 ----
