@@ -60,9 +60,9 @@ class ClipCard(QFrame):
         self.fav_btn.setFixedSize(32, 32)
         self.fav_btn.setCheckable(True)
         self.fav_btn.setChecked(favorite)
-        self.dl_btn = QPushButton("⬇")
+        self.dl_btn = QPushButton("下载")
         self.dl_btn.setObjectName("downloadBtn")
-        self.dl_btn.setFixedSize(32, 32)
+        self.dl_btn.setFixedSize(48, 32)
         self.dl_btn.setToolTip("加入下载队列")
 
         layout.addWidget(self.cover)

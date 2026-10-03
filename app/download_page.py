@@ -70,8 +70,14 @@ def _decrypt(token: str, clip_id: str, enc_data: bytes, rights: dict) -> bytes:
     raw_iv = AESGCM(user_key).decrypt(
         iv[:12], iv[12:], clip_id.encode("utf-8")
     )
-    # 与 JS 侧一致：12 字节 content IV 零扩展到 16 字节 counter。
-    counter = raw_iv + b"\x00\x00\x00\x00"
+    # 与 JS 侧一致：12 字节 content IV 零扩展到 16 字节 counter；
+    # 部分版本直接下发 16 字节 IV，则原样使用。
+    if len(raw_iv) == 12:
+        counter = raw_iv + b"\x00\x00\x00\x00"
+    elif len(raw_iv) == 16:
+        counter = raw_iv
+    else:
+        raise ValueError(f"unexpected content IV length: {len(raw_iv)}")
     decryptor = Cipher(
         algorithms.AES(raw_key), modes.CTR(counter)
     ).decryptor()
