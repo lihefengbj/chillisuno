@@ -101,6 +101,7 @@ class LibraryPage(QWidget):
         self._clips: list[dict] = []
         self._current_id: str | None = None
         self._cards: list[ClipCard] = []
+        self._favorites_only = False
         self._nam = QNetworkAccessManager(self)
 
         layout = QVBoxLayout(self)
@@ -144,7 +145,7 @@ class LibraryPage(QWidget):
             lambda: self.download_all_requested.emit(list(self._clips))
         )
         self.search.textChanged.connect(self._render)
-        self.fav_only.toggled.connect(lambda _c: self._render())
+        self.fav_only.toggled.connect(self._on_fav_only_toggled)
         self.list.itemDoubleClicked.connect(self._play_item)
 
         api.feed_loaded.connect(self._on_feed)
@@ -169,6 +170,10 @@ class LibraryPage(QWidget):
     def _on_fail(self, reason: str) -> None:
         self.status.setText(f"加载失败：{reason}")
 
+    def _on_fav_only_toggled(self, checked: bool) -> None:
+        self._favorites_only = checked
+        self._render()
+
     # ---- 渲染 ----
 
     def _render(self) -> None:
@@ -180,7 +185,7 @@ class LibraryPage(QWidget):
             if kw and kw not in (clip["title"] + clip["tags"]).lower():
                 continue
             is_fav = clip["id"] in favs
-            if self.fav_only.isChecked() and not is_fav:
+            if self._favorites_only and not is_fav:
                 continue
             item = QListWidgetItem(self.list)
             card = ClipCard(clip, is_fav)
