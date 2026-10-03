@@ -67,12 +67,17 @@ class SunoApi(QObject):
 
     # ---- 内部 ----
 
-    def _fetch(self, url: str, callback) -> None:
+    def _fetch(self, url: str, callback, attempt: int = 0) -> None:
         page = self.auth.acquire_page()
         if page is None:
+            if attempt >= 40:  # 40 * 800ms = 32s
+                log.warning("page never ready, giving up")
+                self.fetch_failed.emit("no-page")
+                return
             # 探测页尚未加载：稍后重试，而不是立即失败
-            log.info("page not ready, retry in 800ms")
-            QTimer.singleShot(800, lambda: self._fetch(url, callback))
+            QTimer.singleShot(
+                800, lambda: self._fetch(url, callback, attempt + 1)
+            )
             return
         log.info("fetch %s", url)
         page.runJavaScript(_START_FETCH_JS % (CLERK_CLIENT_API, url))

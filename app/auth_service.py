@@ -171,6 +171,7 @@ class AuthService(QObject):
         self._dialog: LoginDialog | None = None
         self._info: dict = {"logged_in": False}
         self._probe_loaded = False
+        self._probe_loading = False
 
         # 后台探测页：懒加载，避免与登录窗口同时请求 suno.com 触发限流
         self._probe = QWebEnginePage(self.profile, self)
@@ -272,7 +273,8 @@ class AuthService(QObject):
     def _ensure_page(self) -> None:
         if self._dialog is not None and self._dialog.isVisible():
             return
-        if not self._probe_loaded:
+        if not self._probe_loaded and not self._probe_loading:
+            self._probe_loading = True
             log.info("lazy-load probe page: %s/create", SUNO_HOME)
             self._probe.load(QUrl(SUNO_HOME + "/create"))
 
@@ -295,11 +297,13 @@ class AuthService(QObject):
             pass
 
     def _on_probe_loaded(self, ok: bool) -> None:
-        self._probe_loaded = True
+        self._probe_loading = False
+        self._probe_loaded = ok
         log.info(
             "probe page loaded ok=%s url=%s", ok, self._probe.url().toString()
         )
-        self.refresh_credits()
+        if ok:
+            self.refresh_credits()
 
     def _on_dialog_page_loaded(self, ok: bool) -> None:
         log.info(
