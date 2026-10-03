@@ -66,6 +66,13 @@ class ClipCard(QFrame):
         layout.addWidget(dur_label)
         layout.addWidget(self.fav_btn)
 
+    def set_active(self, active: bool) -> None:
+        self.setProperty("active", active)
+        style = self.style()
+        style.unpolish(self)
+        style.polish(self)
+        self.update()
+
 
 class LibraryPage(QWidget):
     def __init__(self, api, storage, player, parent=None) -> None:
@@ -74,6 +81,8 @@ class LibraryPage(QWidget):
         self.storage = storage
         self.player = player
         self._clips: list[dict] = []
+        self._current_id: str | None = None
+        self._cards: list[ClipCard] = []
         self._nam = QNetworkAccessManager(self)
 
         layout = QVBoxLayout(self)
@@ -143,6 +152,7 @@ class LibraryPage(QWidget):
         kw = self.search.text().strip().lower()
         favs = self.storage.favorite_ids()
         self.list.clear()
+        self._cards.clear()
         for clip in self._clips:
             if kw and kw not in (clip["title"] + clip["tags"]).lower():
                 continue
@@ -151,9 +161,11 @@ class LibraryPage(QWidget):
                 continue
             item = QListWidgetItem(self.list)
             card = ClipCard(clip, is_fav)
+            card.set_active(clip["id"] == self._current_id)
             item.setSizeHint(card.sizeHint())
             self.list.addItem(item)
             self.list.setItemWidget(item, card)
+            self._cards.append(card)
             card.fav_btn.clicked.connect(
                 lambda _c=False, cid=clip["id"], btn=card.fav_btn: (
                     btn.setText(
@@ -186,4 +198,10 @@ class LibraryPage(QWidget):
     def _play_item(self, item) -> None:
         card = self.list.itemWidget(item)
         if card:
+            self._current_id = card.clip["id"]
+            self._refresh_active()
             self.player.play_clip(card.clip, self._clips)
+
+    def _refresh_active(self) -> None:
+        for card in self._cards:
+            card.set_active(card.clip["id"] == self._current_id)

@@ -74,6 +74,10 @@ QListWidget#nav::item:selected {{
     border: 1px solid {BORDER};
     border-radius: 10px;
 }}
+#card[active="true"] {{
+    background: #2B3040;
+    border: 1px solid {ACCENT};
+}}
 #card QLabel {{
     background: transparent;
     border: none;

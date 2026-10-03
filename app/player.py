@@ -240,6 +240,7 @@ class PlayerBar(QWidget):
             lambda: setattr(self, "_seeking", True)
         )
         self.progress.sliderReleased.connect(self._on_seek_released)
+        self.hide()
 
         # 状态轮询
         self._poll = QTimer(self)
@@ -297,6 +298,7 @@ class PlayerBar(QWidget):
         page.runJavaScript(js)
         self._playing = True
         self.play_btn.setText("⏸")
+        self.show()
 
     def _toggle(self) -> None:
         page = self._page
