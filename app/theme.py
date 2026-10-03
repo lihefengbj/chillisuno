@@ -168,6 +168,32 @@ QPushButton#favBtn {{
     color: #E5534B;
     font-size: 16px;
 }}
+QPushButton#downloadBtn {{
+    border: none;
+    background: transparent;
+    color: {ACCENT};
+    font-size: 16px;
+}}
+
+/* ---------- 下载中心 ---------- */
+QTableWidget {{
+    background: {BG_CARD};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+    color: {TEXT};
+    gridline-color: {BORDER};
+}}
+QTableWidget::item {{
+    padding: 6px 8px;
+    border: none;
+}}
+QHeaderView::section {{
+    background: {BG_SIDEBAR};
+    color: {TEXT_DIM};
+    border: none;
+    border-bottom: 1px solid {BORDER};
+    padding: 8px;
+}}
 
 /* ---------- 播放条 ---------- */
 #playerBar {{

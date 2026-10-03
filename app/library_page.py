@@ -1,6 +1,6 @@
 """曲库页：作品列表、搜索、收藏、播放。"""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PySide6.QtCore import QUrl
@@ -60,10 +60,15 @@ class ClipCard(QFrame):
         self.fav_btn.setFixedSize(32, 32)
         self.fav_btn.setCheckable(True)
         self.fav_btn.setChecked(favorite)
+        self.dl_btn = QPushButton("⬇")
+        self.dl_btn.setObjectName("downloadBtn")
+        self.dl_btn.setFixedSize(32, 32)
+        self.dl_btn.setToolTip("加入下载队列")
 
         layout.addWidget(self.cover)
         layout.addLayout(info, 1)
         layout.addWidget(dur_label)
+        layout.addWidget(self.dl_btn)
         layout.addWidget(self.fav_btn)
 
     def set_active(self, active: bool) -> None:
@@ -75,6 +80,9 @@ class ClipCard(QFrame):
 
 
 class LibraryPage(QWidget):
+    download_requested = Signal(dict)
+    download_all_requested = Signal(list)
+
     def __init__(self, api, storage, player, parent=None) -> None:
         super().__init__(parent)
         self.api = api
@@ -99,8 +107,10 @@ class LibraryPage(QWidget):
         self.fav_only.setCheckable(True)
         refresh_btn = QPushButton("刷新")
         refresh_btn.setObjectName("primary")
+        download_all_btn = QPushButton("全部下载")
         toolbar.addWidget(self.search, 1)
         toolbar.addWidget(self.fav_only)
+        toolbar.addWidget(download_all_btn)
         toolbar.addWidget(refresh_btn)
 
         self.status = QLabel("点击刷新加载你的作品")
@@ -120,6 +130,9 @@ class LibraryPage(QWidget):
         layout.addWidget(self.list, 1)
 
         refresh_btn.clicked.connect(self.reload)
+        download_all_btn.clicked.connect(
+            lambda: self.download_all_requested.emit(list(self._clips))
+        )
         self.search.textChanged.connect(self._render)
         self.fav_only.toggled.connect(lambda _c: self._render())
         self.list.itemDoubleClicked.connect(self._play_item)
@@ -172,6 +185,9 @@ class LibraryPage(QWidget):
                         "♥" if self.storage.toggle_favorite(cid) else "♡"
                     )
                 )
+            )
+            card.dl_btn.clicked.connect(
+                lambda _c=False, c=clip: self.download_requested.emit(c)
             )
             self._load_cover(card)
         self.list.viewport().update()

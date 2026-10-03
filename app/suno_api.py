@@ -48,6 +48,36 @@ window.__chilliApi = null;
 
 _READ_JS = "window.__chilliApi"
 
+_START_TOKEN_JS = (
+    """
+window.__chilliToken = null;
+(async () => {
+  try {
+    const cr = await fetch("%s", { credentials: "include" });
+    if (!cr.ok) throw {reason: "clerk-http-" + cr.status};
+    const client = await cr.json();
+    const sessions = (client && client.response && client.response.sessions)
+                     || (client && client.sessions) || [];
+    let jwt = null;
+    for (const s of sessions) {
+      const t = s.last_active_token && s.last_active_token.jwt;
+      if (t) { jwt = t; break; }
+    }
+    if (!jwt) throw {reason: "no-session"};
+    window.__chilliToken = JSON.stringify({ok: true, token: jwt});
+  } catch (e) {
+    window.__chilliToken = JSON.stringify(
+      Object.assign({ok: false}, (e && e.reason) ? e : {error: String(e)})
+    );
+  }
+})();
+"started"
+"""
+    % CLERK_CLIENT_API
+)
+
+_READ_TOKEN_JS = "window.__chilliToken"
+
 
 class SunoApi(QObject):
     """通过 AuthService 的页面上下文执行接口调用。"""
@@ -64,6 +94,47 @@ class SunoApi(QObject):
     def fetch_feed(self, page: int = 0) -> None:
         url = f"{API_BASE}/api/feed/v2?page={page}"
         self._fetch(url, self._on_feed_raw)
+
+    def fetch_token(self, callback, attempt: int = 0) -> None:
+        """在页面上下文中取 Clerk JWT，异步回调 callback(token|None)。"""
+        page = self.auth.acquire_page()
+        if page is None:
+            if attempt >= 40:
+                log.warning("token page never ready")
+                callback(None)
+                return
+            QTimer.singleShot(
+                800, lambda: self.fetch_token(callback, attempt + 1)
+            )
+            return
+        page.runJavaScript(_START_TOKEN_JS)
+        self._wait_token(page, callback, 0)
+
+    def _wait_token(self, page, callback, n: int) -> None:
+        if n > 20:
+            log.warning("token fetch timeout")
+            callback(None)
+            return
+
+        def read(raw) -> None:
+            if raw in (None, "", "null"):
+                QTimer.singleShot(
+                    500, lambda: self._wait_token(page, callback, n + 1)
+                )
+                return
+            try:
+                payload = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                callback(None)
+                return
+            callback(payload.get("token") if payload.get("ok") else None)
+
+        try:
+            page.runJavaScript(_READ_TOKEN_JS, read)
+        except RuntimeError:
+            QTimer.singleShot(
+                500, lambda: self._wait_token(page, callback, n + 1)
+            )
 
     # ---- 内部 ----
 

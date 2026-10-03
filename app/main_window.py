@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from app.auth_service import AuthService
 from app import theme
+from app.download_page import DownloadPage
 from app.logger import bus as log_bus
 from app.library_page import LibraryPage
 from app.player import PlayerBar
@@ -133,14 +134,20 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_account_page())
         self.library_page = LibraryPage(self.api, self.storage, self.player)
+        self.download_page = DownloadPage(self.api)
         self.pages.addWidget(self.library_page)
-        self.pages.addWidget(_placeholder_page("下载中心 · M3 开发中"))
+        self.pages.addWidget(self.download_page)
         self.pages.addWidget(_placeholder_page("上传 · M4 开发中"))
         self.pages.addWidget(_placeholder_page("设置 · 待实现"))
         self.pages.addWidget(LogPage())
 
         nav.currentRowChanged.connect(self.pages.setCurrentIndex)
         nav.currentRowChanged.connect(self._on_nav_changed)
+
+        self.library_page.download_requested.connect(self.download_page.add_clip)
+        self.library_page.download_all_requested.connect(
+            self.download_page.add_clips
+        )
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
