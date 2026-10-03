@@ -215,17 +215,26 @@ class AuthService(QObject):
         """
         store = self.profile.cookieStore()
         count = 0
+        has_session = False
         for pair in cookie_str.split(";"):
             name, sep, value = pair.partition("=")
             name, value = name.strip(), value.strip()
             if not sep or not name:
                 continue
+            if name == "__session":
+                has_session = True
             cookie = QNetworkCookie(name.encode(), value.encode())
             cookie.setDomain(".suno.com")
             cookie.setPath("/")
             store.setCookie(cookie, QUrl(SUNO_HOME))
             count += 1
-        log.info("imported %d cookies", count)
+        log.info("imported %d cookies, has __session=%s", count, has_session)
+        if not has_session:
+            log.warning(
+                "no __session in imported cookies; HttpOnly cookies are "
+                "missing from document.cookie - copy the Cookie request "
+                "header from DevTools Network tab instead"
+            )
         self._probe_loaded = False
         self.refresh_credits()
         return count

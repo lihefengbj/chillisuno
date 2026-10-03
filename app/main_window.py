@@ -222,11 +222,14 @@ class MainWindow(QMainWindow):
         dlg.resize(560, 320)
         layout = QVBoxLayout(dlg)
         hint = QLabel(
-            "适用于 Google 无法在内嵌窗口登录的情况：\n"
-            "1. 在你常用的浏览器中登录 suno.com\n"
-            "2. 按 F12 → 应用(Application) → Cookies → https://suno.com，"
-            "或在控制台执行 document.cookie\n"
-            "3. 把 cookie 字符串粘贴到下面，点击导入"
+            "适用于 Google 无法在内嵌窗口登录的情况。\n"
+            "注意：__session 是 HttpOnly，document.cookie 读不到，"
+            "必须从网络请求头复制：\n"
+            "1. 在常用浏览器中登录 suno.com 并保持在该页面\n"
+            "2. 按 F12 → 网络(Network) → 刷新页面\n"
+            "3. 任选一条发往 suno.com 的请求 → 标头(Headers) → "
+            "找到请求头 Cookie: → 复制整行值\n"
+            "4. 粘贴到下面，点击导入"
         )
         hint.setWordWrap(True)
         edit = QPlainTextEdit()
@@ -235,8 +238,14 @@ class MainWindow(QMainWindow):
         ok.setObjectName("primary")
 
         def do_import() -> None:
-            n = self.auth.import_cookies(edit.toPlainText())
-            hint.setText(f"已导入 {n} 个 Cookie，正在验证登录态…")
+            text = edit.toPlainText()
+            if "__session" not in text:
+                hint.setText(
+                    "⚠ 粘贴的内容中没有 __session（关键的登录凭证）。\n"
+                    "它很可能是 HttpOnly，请按上面步骤从网络请求头复制完整 Cookie。"
+                )
+                return
+            n = self.auth.import_cookies(text)
             if n:
                 dlg.accept()
 
