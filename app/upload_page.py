@@ -11,18 +11,20 @@ import requests
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSpinBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from app.logger import get_logger
-from app.obfuscator import STRENGTHS, process, similarity
+from app.obfuscator import STRENGTHS, process, similarity, slice_audio
 
 log = get_logger("upload")
 
@@ -88,6 +90,26 @@ class S3UploadWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class SliceWorker(QThread):
+    """后台切片：把混淆后的超长 WAV 切成多段。"""
+
+    done = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, src: str, out_dir: str, max_sec: int, parent=None) -> None:
+        super().__init__(parent)
+        self.src = src
+        self.out_dir = out_dir
+        self.max_sec = max_sec
+
+    def run(self) -> None:  # noqa: D102
+        try:
+            parts = slice_audio(self.src, self.out_dir, self.max_sec)
+            self.done.emit([str(p) for p in parts])
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
+
+
 class UploadPage(QWidget):
     clip_initialized = Signal(str)
 
@@ -96,8 +118,13 @@ class UploadPage(QWidget):
         self.api = api
         self._src: str | None = None
         self._processed: str | None = None
+        self._segments: list[str] = []
         self._obf_worker: ObfuscateWorker | None = None
+        self._slice_worker: SliceWorker | None = None
         self._s3_worker: S3UploadWorker | None = None
+        self._current_file: str | None = None
+        self._queue: list[str] = []
+        self._queue_index = 0
         self._upload_id: str | None = None
         self._upload_filename: str | None = None
         self._poll_attempt = 0
@@ -133,6 +160,17 @@ class UploadPage(QWidget):
         opt_row.addWidget(self.upload_btn)
         opt_row.addStretch(1)
 
+        slice_row = QHBoxLayout()
+        self.slice_enabled = QCheckBox("超长自动切片")
+        self.slice_sec = QSpinBox()
+        self.slice_sec.setRange(10, 600)
+        self.slice_sec.setValue(480)
+        self.slice_sec.setSuffix(" 秒")
+        slice_row.addWidget(self.slice_enabled)
+        slice_row.addWidget(QLabel("每段最长"))
+        slice_row.addWidget(self.slice_sec)
+        slice_row.addStretch(1)
+
         self.log_view = QTextEdit()
         self.log_view.setObjectName("logView")
         self.log_view.setReadOnly(True)
@@ -141,6 +179,7 @@ class UploadPage(QWidget):
         layout.addWidget(desc)
         layout.addLayout(file_row)
         layout.addLayout(opt_row)
+        layout.addLayout(slice_row)
         layout.addWidget(self.log_view, 1)
 
         choose_btn.clicked.connect(self._choose_file)
@@ -171,6 +210,8 @@ class UploadPage(QWidget):
     def _set_src(self, path: str) -> None:
         self._src = path
         self._processed = None
+        self._segments = []
+        self._queue = []
         self.file_label.setText(path)
         self.upload_btn.setEnabled(True)
         self._append_log(f"已选择：{path}")
@@ -184,6 +225,7 @@ class UploadPage(QWidget):
         strength = STRENGTHS[self.strength.currentText()]
         dst = str(Path(self._src).with_suffix(".obf.wav"))
         self.process_btn.setEnabled(False)
+        self.upload_btn.setEnabled(False)
         self._append_log(f"开始混淆（强度={self.strength.currentText()}）")
         self._obf_worker = ObfuscateWorker(self._src, dst, strength, self)
         self._obf_worker.done.connect(self._on_obf_done)
@@ -193,11 +235,44 @@ class UploadPage(QWidget):
 
     def _on_obf_done(self, path: str) -> None:
         self._processed = path
+        self._segments = []
         if self._src and Path(path).exists():
             sim = similarity(self._src, path)
             self._append_log(f"混淆完成：{path}")
             self._append_log(f"混淆前后指纹相似度：{sim}%")
-            self.upload_btn.setEnabled(True)
+            if self.slice_enabled.isChecked():
+                self._start_slice(path)
+            else:
+                self.upload_btn.setEnabled(True)
+
+    def _start_slice(self, path: str) -> None:
+        max_sec = self.slice_sec.value()
+        out_dir = Path(path).with_name(Path(path).stem + "_slices")
+        self._append_log(f"开始切片：每段最长 {max_sec} 秒")
+        self.upload_btn.setEnabled(False)
+        self._slice_worker = SliceWorker(path, str(out_dir), max_sec, self)
+        self._slice_worker.done.connect(self._on_slice_done)
+        self._slice_worker.failed.connect(self._on_slice_failed)
+        self._slice_worker.finished.connect(self._on_slice_finished)
+        self._slice_worker.start()
+
+    def _on_slice_done(self, parts: list) -> None:
+        self._segments = [str(p) for p in parts]
+        if self._segments:
+            self._append_log(f"切片完成：{len(self._segments)} 段")
+        else:
+            self._append_log("音频未超过设定时长，无需切片，将上传完整文件")
+        self.upload_btn.setEnabled(True)
+
+    def _on_slice_failed(self, error: str) -> None:
+        self._segments = []
+        self._append_log(f"切片失败：{error}（将回退为上传完整文件）")
+        self.upload_btn.setEnabled(True)
+
+    def _on_slice_finished(self) -> None:
+        if self._slice_worker:
+            self._slice_worker.deleteLater()
+            self._slice_worker = None
 
     def _on_obf_failed(self, error: str) -> None:
         self._append_log(f"混淆失败：{error}")
@@ -211,12 +286,29 @@ class UploadPage(QWidget):
     # ---- 上传 ----
 
     def _upload(self) -> None:
-        file_path = self._processed or self._src
-        if not file_path:
+        if self._segments:
+            self._queue = list(self._segments)
+        elif self._processed:
+            self._queue = [self._processed]
+        elif self._src:
+            self._queue = [self._src]
+        else:
             self._append_log("请先选择并处理音频")
             return
+        self._queue_index = 0
+        self._append_log(f"开始上传，共 {len(self._queue)} 个文件")
+        self._start_current_upload()
+
+    def _start_current_upload(self) -> None:
+        file_path = self._queue[self._queue_index]
+        self._current_file = file_path
         self.upload_btn.setEnabled(False)
-        self._append_log(f"准备上传：{file_path}")
+        prefix = (
+            f"[{self._queue_index + 1}/{len(self._queue)}] "
+            if len(self._queue) > 1
+            else ""
+        )
+        self._append_log(f"{prefix}准备上传：{file_path}")
         self._append_log("获取上传授权")
         ext = Path(file_path).suffix.lstrip(".").lower() or "wav"
         self._upload_filename = Path(file_path).name
@@ -241,7 +333,7 @@ class UploadPage(QWidget):
             return
         self._upload_id = upload_id
         self._append_log("上传到对象存储")
-        file_path = self._processed or self._src
+        file_path = self._current_file or self._processed or self._src
         self._s3_worker = S3UploadWorker(upload_url, fields, file_path, self)
         self._s3_worker.done.connect(self._on_s3_done)
         self._s3_worker.failed.connect(self._fail_upload)
@@ -332,11 +424,24 @@ class UploadPage(QWidget):
         if not clip_id:
             self._fail_upload(f"initialize-clip 缺少 clip_id：{payload}")
             return
-        self._append_log(f"上传成功：clip_id={clip_id}")
+        self._append_log(f"上传成功：clip_id={clip_id}（{self._current_file}）")
         self.clip_initialized.emit(clip_id)
+        self._advance_queue()
+
+    def _advance_queue(self) -> None:
+        if self._queue_index + 1 < len(self._queue):
+            self._queue_index += 1
+            QTimer.singleShot(600, self._start_current_upload)
+            return
+        if len(self._queue) > 1:
+            self._append_log(f"全部 {len(self._queue)} 个切片上传完成")
         self.upload_btn.setEnabled(True)
 
     def _fail_upload(self, error: str) -> None:
+        if len(self._queue) > 1:
+            self._append_log(
+                f"已上传 {self._queue_index}/{len(self._queue)} 个文件，本次已停止"
+            )
         self._append_log(f"上传失败：{error}")
         self.upload_btn.setEnabled(True)
 

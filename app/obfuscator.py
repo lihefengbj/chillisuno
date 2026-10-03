@@ -101,6 +101,40 @@ def similarity(path_a: str | Path, path_b: str | Path) -> float:
     return round(same / total * 100, 1)
 
 
+def slice_audio(
+    src: str | Path, out_dir: str | Path, max_seconds: int
+) -> list[Path]:
+    """把音频按最大时长切成多段 WAV，返回切片路径列表。
+
+    用于超长音频逐段上传。若音频本身不超过 max_seconds，则返回空列表
+    （表示无需切片）。
+    """
+    src = Path(src)
+    out_dir = Path(out_dir)
+    info = sf.info(str(src))
+    sr = info.samplerate
+    frames_per = int(max_seconds * sr)
+    if info.frames <= frames_per:
+        return []
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = src.stem
+    parts: list[Path] = []
+    with sf.SoundFile(str(src)) as fh:
+        pos = 0
+        idx = 1
+        while pos < info.frames:
+            end = min(pos + frames_per, info.frames)
+            fh.seek(pos)
+            data = fh.read(end - pos, dtype="float32", always_2d=True)
+            out = out_dir / f"{stem}_part{idx:03d}.wav"
+            sf.write(str(out), data, sr, subtype="PCM_16")
+            parts.append(out)
+            pos = end
+            idx += 1
+    return parts
+
+
 def process(src: str | Path, dst: str | Path, strength: int) -> Path:
     """按强度混淆，写出 WAV，返回目标路径。"""
     src = Path(src)
