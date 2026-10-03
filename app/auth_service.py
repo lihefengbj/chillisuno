@@ -35,30 +35,31 @@ def _chrome_like_ua(profile: QWebEngineProfile) -> str:
     return re.sub(r"QtWebEngine/\S+\s*", "", profile.httpUserAgent())
 
 
-# 在 suno.com 页面上下文中执行：取 Clerk 会话令牌 -> 拉取账单/额度信息。
-# 返回带 dbg 诊断字段的 JSON，便于日志定位检测失败原因。
-_FETCH_SESSION_JS = (
+# 注意：QWebEnginePage.runJavaScript 不会等待 Promise 完成，
+# 因此分两段执行：_START 启动异步任务并把结果写入 window.__chilliResult，
+# 延迟后再用 _READ 读取。
+_START_SESSION_JS = (
     """
+window.__chilliResult = null;
 (async () => {
   const dbg = {url: location.href, title: document.title || "",
                clerk: !!window.Clerk,
                session: !!(window.Clerk && window.Clerk.session)};
   try {
     if (dbg.title.toLowerCase().includes("too many"))
-      return JSON.stringify({logged_in:false, rate_limited:true, dbg});
+      throw {rate_limited: true};
     if (!dbg.session)
-      return JSON.stringify({logged_in:false, dbg, reason:"no-clerk-session"});
+      throw {reason: "no-clerk-session"};
     const token = await window.Clerk.session.getToken();
     if (!token)
-      return JSON.stringify({logged_in:false, dbg, reason:"no-token"});
+      throw {reason: "no-token"};
     const resp = await fetch("%s", {
       headers: { "Authorization": "Bearer " + token }
     });
     if (!resp.ok)
-      return JSON.stringify({logged_in:true, credits:null, dbg,
-                             reason:"billing-http-" + resp.status});
+      throw {reason: "billing-http-" + resp.status, logged_in: true};
     const data = await resp.json();
-    return JSON.stringify({
+    window.__chilliResult = JSON.stringify({
       logged_in: true,
       credits: data.total_credits_left ?? null,
       email: (window.Clerk.user && window.Clerk.user.primaryEmailAddress
@@ -66,12 +67,16 @@ _FETCH_SESSION_JS = (
       dbg
     });
   } catch (e) {
-    return JSON.stringify({logged_in:false, dbg, error:String(e)});
+    window.__chilliResult = JSON.stringify(Object.assign(
+      {logged_in: false, dbg}, (e && e.reason) ? e : {error: String(e)}));
   }
-})()
+})();
+"started"
 """
     % BILLING_API
 )
+
+_READ_SESSION_JS = "window.__chilliResult"
 
 
 class LoginDialog(QDialog):
@@ -150,7 +155,15 @@ class AuthService(QObject):
         page = self._active_page()
         if page is None:
             return
-        page.runJavaScript(_FETCH_SESSION_JS, self._on_probe_result)
+        page.runJavaScript(_START_SESSION_JS)
+        QTimer.singleShot(1500, lambda: self._read_result(page))
+
+    def _read_result(self, page: QWebEnginePage) -> None:
+        # 页面可能已跳转，读取时确认页面仍然有效
+        try:
+            page.runJavaScript(_READ_SESSION_JS, self._on_probe_result)
+        except RuntimeError:
+            pass
 
     # ---- 内部 ----
 
@@ -164,7 +177,7 @@ class AuthService(QObject):
             return None
         if not self._probe_loaded:
             log.info("lazy-load probe page: %s", SUNO_HOME)
-            self._probe.load(QUrl(SUNO_HOME))
+            self._probe.load(QUrl(SUNO_HOME + "/create"))
             return None
         return self._probe
 
@@ -220,7 +233,7 @@ class AuthService(QObject):
 
     def _reload_probe(self) -> None:
         log.info("reload probe page after backoff")
-        self._probe.load(QUrl(SUNO_HOME))
+        self._probe.load(QUrl(SUNO_HOME + "/create"))
 
     def _on_dialog_closed(self, _code) -> None:
         log.info("login dialog closed")
