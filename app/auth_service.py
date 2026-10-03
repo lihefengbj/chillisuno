@@ -65,7 +65,10 @@ class TokenInterceptor(QWebEngineUrlRequestInterceptor):
         if "suno" not in host:
             return
         headers = info.httpHeaders()
-        auth = headers.value(b"Authorization") or headers.value(b"authorization")
+        try:
+            auth = headers.get(b"Authorization") or headers.get(b"authorization")
+        except AttributeError:
+            auth = headers.value(b"Authorization") or headers.value(b"authorization")
         if auth:
             token = bytes(auth).decode(errors="replace").removeprefix("Bearer ")
             if token:
