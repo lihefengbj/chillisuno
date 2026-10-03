@@ -19,6 +19,10 @@ from PySide6.QtWidgets import (
 from app.auth_service import AuthService
 from app import theme
 from app.logger import bus as log_bus
+from app.library_page import LibraryPage
+from app.player import PlayerBar
+from app.storage import Storage
+from app.suno_api import SunoApi
 
 
 class LogPage(QWidget):
@@ -75,6 +79,9 @@ class MainWindow(QMainWindow):
 
         self.auth = AuthService(self)
         self.auth.session_changed.connect(self._on_session_changed)
+        self.storage = Storage()
+        self.api = SunoApi(self.auth, self)
+        self.player = PlayerBar(self)
 
         # ---------- 侧边栏 ----------
         sidebar = QWidget()
@@ -122,7 +129,7 @@ class MainWindow(QMainWindow):
         # ---------- 页面栈 ----------
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_account_page())
-        self.pages.addWidget(_placeholder_page("曲库 · M2 开发中"))
+        self.pages.addWidget(LibraryPage(self.api, self.storage, self.player))
         self.pages.addWidget(_placeholder_page("下载中心 · M3 开发中"))
         self.pages.addWidget(_placeholder_page("上传 · M4 开发中"))
         self.pages.addWidget(_placeholder_page("设置 · 待实现"))
@@ -134,7 +141,14 @@ class MainWindow(QMainWindow):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
         body.addWidget(sidebar)
-        body.addWidget(self.pages, 1)
+
+        right = QVBoxLayout()
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(0)
+        right.addWidget(self.pages, 1)
+        right.addWidget(self.player)
+
+        body.addLayout(right, 1)
         container = QWidget()
         container.setLayout(body)
         self.setCentralWidget(container)

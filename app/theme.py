@@ -135,5 +135,69 @@ QPushButton#danger:hover {{ border-color: #E5534B; color: #E5534B; }}
     padding: 8px;
 }}
 
+/* ---------- 曲库 ---------- */
+QLineEdit {{
+    background: {BG_CARD};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: {TEXT};
+}}
+QLineEdit:focus {{ border-color: {ACCENT}; }}
+
+QListWidget#clipList {{
+    background: transparent;
+    border: none;
+}}
+QListWidget#clipList::item {{ border: none; }}
+#cover {{
+    background: {BG_SIDEBAR};
+    border-radius: 8px;
+    color: {TEXT_DIM};
+    font-size: 22px;
+}}
+#clipTitle {{ font-size: 15px; font-weight: 600; }}
+#clipTags {{ color: {TEXT_DIM}; font-size: 12px; }}
+QPushButton#favBtn {{
+    border: none;
+    background: transparent;
+    color: #E5534B;
+    font-size: 16px;
+}}
+
+/* ---------- 播放条 ---------- */
+#playerBar {{
+    background: {BG_SIDEBAR};
+    border-top: 1px solid {BORDER};
+}}
+#playerBar QLabel {{ background: transparent; }}
+#playerTitle {{ font-weight: 600; }}
+#playerTime {{ color: {TEXT_DIM}; font-size: 12px; }}
+QPushButton#playBtn {{
+    background: {ACCENT};
+    border: none;
+    border-radius: 18px;
+    color: white;
+    font-size: 15px;
+}}
+QPushButton#playBtn:hover {{ background: {ACCENT_HOVER}; }}
+#playerBar QPushButton {{
+    border-radius: 18px;
+    padding: 0;
+}}
+QSlider::groove:horizontal {{
+    height: 4px;
+    background: {BORDER};
+    border-radius: 2px;
+}}
+QSlider::handle:horizontal {{
+    width: 12px;
+    height: 12px;
+    margin: -5px 0;
+    border-radius: 6px;
+    background: {TEXT};
+}}
+QSlider::sub-page:horizontal {{ background: {ACCENT}; border-radius: 2px; }}
+
 QToolTip {{ background: {BG_CARD}; color: {TEXT}; border: 1px solid {BORDER}; }}
 """

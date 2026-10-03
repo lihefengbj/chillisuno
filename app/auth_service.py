@@ -256,6 +256,10 @@ class AuthService(QObject):
 
     # ---- 内部 ----
 
+    def acquire_page(self) -> QWebEnginePage | None:
+        """供 SunoApi 等模块复用页面上下文执行 JS。"""
+        return self._active_page()
+
     def _on_token(self, token: str) -> None:
         host, _, token = token.partition("|")
         if token != self._token:
