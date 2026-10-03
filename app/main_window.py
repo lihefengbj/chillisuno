@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -50,7 +52,8 @@ class LogPage(QWidget):
         log_bus.record.connect(self._append)
 
     def _append(self, level: str, message: str) -> None:
-        self.view.appendPlainText(f"[{level}] {message}")
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.view.appendPlainText(f"[{ts}] [{level}] {message}")
         doc = self.view.document()
         while doc.blockCount() > self.MAX_LINES:
             cursor = self.view.textCursor()
