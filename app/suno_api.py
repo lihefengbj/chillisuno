@@ -112,11 +112,15 @@ class SunoApi(QObject):
         if not cid:
             return None
         meta = clip.get("metadata") or {}
+        audio_url = clip.get("audio_url") or ""
+        # feed 里部分曲目的 audio_url 是 .../api/forbidden 占位符，
+        # 一律回退到 CDN 直链规则
+        if "forbidden" in audio_url or not audio_url:
+            audio_url = f"https://cdn1.suno.ai/{cid}.mp3"
         return {
             "id": cid,
             "title": clip.get("title") or "未命名",
-            "audio_url": clip.get("audio_url")
-            or f"https://cdn1.suno.ai/{cid}.mp3",
+            "audio_url": audio_url,
             "image_url": clip.get("image_url")
             or f"https://cdn2.suno.ai/image_{cid}.jpeg",
             "tags": meta.get("tags") or "",
