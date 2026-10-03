@@ -32,7 +32,6 @@ _INIT_JS = """
 if (!window.__chilliAudio) {
   window.__chilliAudio = new Audio();
   window.__chilliAudio.preload = "auto";
-  window.__chilliAudio.crossOrigin = "anonymous";
   document.body.appendChild(window.__chilliAudio);
 }
 true
