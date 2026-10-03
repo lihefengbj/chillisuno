@@ -97,7 +97,7 @@ window.__chilliReq = null;
     const r = await fetch("%s", {
       method: "%s",
       headers: { "Authorization": "Bearer " + jwt, "Content-Type": "application/json" },
-      body: %s
+      body: JSON.stringify(%s)
     });
     const text = await r.text();
     window.__chilliReq = JSON.stringify({ok: r.ok, status: r.status, text: text});
@@ -189,6 +189,8 @@ class SunoApi(QObject):
                 )
             )
             return
+        # fetch 的 body 不接受普通对象，否则浏览器会把它序列化成
+        # "[object Object]"，Suno 返回 400 "Cannot parse request body"。
         body_js = "undefined" if body is None else json.dumps(body)
         page.runJavaScript(
             _START_REQUEST_JS % (CLERK_CLIENT_API, url, method.upper(), body_js)
