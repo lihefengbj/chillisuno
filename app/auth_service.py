@@ -49,16 +49,25 @@ class TokenInterceptor(QWebEngineUrlRequestInterceptor):
     """
 
     tokenCaptured = Signal(str)
+    hostSeen = Signal(str, str)  # (host, resource_type) 诊断用
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._seen: set[str] = set()
 
     def interceptRequest(self, info) -> None:
-        if info.requestUrl().host() != "studio-api.suno.ai":
+        host = info.requestUrl().host()
+        if host not in self._seen:
+            self._seen.add(host)
+            self.hostSeen.emit(host, str(info.resourceType()))
+        if "suno" not in host:
             return
         headers = info.httpHeaders()
         auth = headers.value(b"Authorization") or headers.value(b"authorization")
         if auth:
             token = bytes(auth).decode(errors="replace").removeprefix("Bearer ")
             if token:
-                self.tokenCaptured.emit(token)
+                self.tokenCaptured.emit(host + "|" + token)
 
 
 # 注意：QWebEnginePage.runJavaScript 不会等待 Promise 完成，
@@ -131,6 +140,10 @@ class AuthService(QObject):
         self._interceptor.tokenCaptured.connect(
             self._on_token, Qt.ConnectionType.QueuedConnection
         )
+        self._interceptor.hostSeen.connect(
+            lambda host, rtype: log.info("intercept host: %s (%s)", host, rtype),
+            Qt.ConnectionType.QueuedConnection,
+        )
         self.profile.setUrlRequestInterceptor(self._interceptor)
 
         self._dialog: LoginDialog | None = None
@@ -189,8 +202,9 @@ class AuthService(QObject):
     # ---- 内部 ----
 
     def _on_token(self, token: str) -> None:
+        host, _, token = token.partition("|")
         if token != self._token:
-            log.info("captured api token (len=%d)", len(token))
+            log.info("captured api token from %s (len=%d)", host, len(token))
             self._token = token
             if not self._info.get("logged_in"):
                 self._set_state({"logged_in": True, "credits": None})
