@@ -26,6 +26,7 @@ from app.library_page import LibraryPage
 from app.player import PlayerBar
 from app.storage import Storage
 from app.suno_api import SunoApi
+from app.upload_page import UploadPage
 
 
 class LogPage(QWidget):
@@ -137,7 +138,8 @@ class MainWindow(QMainWindow):
         self.download_page = DownloadPage(self.api)
         self.pages.addWidget(self.library_page)
         self.pages.addWidget(self.download_page)
-        self.pages.addWidget(_placeholder_page("上传 · M4 开发中"))
+        self.upload_page = UploadPage(self.api)
+        self.pages.addWidget(self.upload_page)
         self.pages.addWidget(_placeholder_page("设置 · 待实现"))
         self.pages.addWidget(LogPage())
 

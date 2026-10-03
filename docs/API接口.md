@@ -61,7 +61,10 @@ JWT 有有效期（约 1 分钟级），每次调用前重新走一遍该流程�
 
 | 接口 | 说明 |
 |---|---|
-| `POST https://studio-api.suno.ai/api/uploads/audio/` | 上传音频（用于 Extend/Cover），M4 期间核实参数 |
+| `POST https://studio-api-prod.suno.com/api/uploads/audio` | 申请上传授权，body `{"extension":"wav"}`，返回 S3 预签名字段 |
+| `POST {fields.url}` | multipart/form-data 上传文件到 Suno S3（fields + file） |
+| `POST .../api/uploads/audio/{id}/upload-finish` | 通知上传完成 |
+| `GET .../api/uploads/audio/{id}` | 轮询处理状态到 `complete` |
 
 上传前经过本地混淆管道（见 roadmap M4）。
 

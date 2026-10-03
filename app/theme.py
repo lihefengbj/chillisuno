@@ -149,6 +149,21 @@ QLineEdit {{
 }}
 QLineEdit:focus {{ border-color: {ACCENT}; }}
 
+QComboBox {{
+    background: {BG_CARD};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: {TEXT};
+}}
+QComboBox:hover {{ border-color: {ACCENT}; }}
+QComboBox QAbstractItemView {{
+    background: {BG_CARD};
+    border: 1px solid {BORDER};
+    color: {TEXT};
+    selection-background-color: {ACCENT};
+}}
+
 QListWidget#clipList {{
     background: transparent;
     border: none;
