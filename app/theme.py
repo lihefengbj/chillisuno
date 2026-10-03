@@ -167,12 +167,14 @@ QPushButton#favBtn {{
     background: transparent;
     color: #E5534B;
     font-size: 16px;
+    padding: 0;
 }}
 QPushButton#downloadBtn {{
     border: none;
     background: transparent;
     color: {ACCENT};
-    font-size: 16px;
+    font-size: 13px;
+    padding: 0;
 }}
 
 /* ---------- 下载中心 ---------- */

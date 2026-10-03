@@ -44,14 +44,16 @@ class ClipCard(QFrame):
         title = QLabel(clip["title"])
         title.setObjectName("clipTitle")
         title.setWordWrap(True)
+        title.setMinimumWidth(0)
         title.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
         )
         tags = QLabel(clip["tags"] or " ")
         tags.setObjectName("clipTags")
         tags.setWordWrap(True)
+        tags.setMinimumWidth(0)
         tags.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
         )
         info.addWidget(title)
         info.addWidget(tags)
@@ -70,7 +72,7 @@ class ClipCard(QFrame):
         self.fav_btn.setChecked(favorite)
         self.dl_btn = QPushButton("下载")
         self.dl_btn.setObjectName("downloadBtn")
-        self.dl_btn.setFixedSize(48, 32)
+        self.dl_btn.setFixedSize(56, 32)
         self.dl_btn.setToolTip("加入下载队列")
 
         layout.addWidget(self.cover)
