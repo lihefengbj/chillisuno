@@ -1,6 +1,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QStackedWidget,
+    QPlainTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -194,10 +196,12 @@ class MainWindow(QMainWindow):
         btn_row.setSpacing(12)
         self.login_btn = QPushButton("登录 Suno")
         self.login_btn.setObjectName("primary")
+        self.import_btn = QPushButton("导入 Cookie")
         self.logout_btn = QPushButton("退出登录")
         self.logout_btn.setObjectName("danger")
         self.refresh_btn = QPushButton("刷新额度")
         btn_row.addWidget(self.login_btn)
+        btn_row.addWidget(self.import_btn)
         btn_row.addWidget(self.refresh_btn)
         btn_row.addStretch(1)
         btn_row.addWidget(self.logout_btn)
@@ -206,10 +210,41 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
 
         self.login_btn.clicked.connect(self.auth.login)
+        self.import_btn.clicked.connect(self._show_import_dialog)
         self.logout_btn.clicked.connect(self.auth.logout)
         self.refresh_btn.clicked.connect(self.auth.refresh_credits)
         self._update_account_ui({"logged_in": False})
         return page
+
+    def _show_import_dialog(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle("从浏览器导入 Cookie")
+        dlg.resize(560, 320)
+        layout = QVBoxLayout(dlg)
+        hint = QLabel(
+            "适用于 Google 无法在内嵌窗口登录的情况：\n"
+            "1. 在你常用的浏览器中登录 suno.com\n"
+            "2. 按 F12 → 应用(Application) → Cookies → https://suno.com，"
+            "或在控制台执行 document.cookie\n"
+            "3. 把 cookie 字符串粘贴到下面，点击导入"
+        )
+        hint.setWordWrap(True)
+        edit = QPlainTextEdit()
+        edit.setPlaceholderText("name1=value1; name2=value2; ...")
+        ok = QPushButton("导入")
+        ok.setObjectName("primary")
+
+        def do_import() -> None:
+            n = self.auth.import_cookies(edit.toPlainText())
+            hint.setText(f"已导入 {n} 个 Cookie，正在验证登录态…")
+            if n:
+                dlg.accept()
+
+        ok.clicked.connect(do_import)
+        layout.addWidget(hint)
+        layout.addWidget(edit, 1)
+        layout.addWidget(ok, 0, Qt.AlignmentFlag.AlignRight)
+        dlg.exec()
 
     def _on_session_changed(self, info: dict) -> None:
         self._update_account_ui(info)

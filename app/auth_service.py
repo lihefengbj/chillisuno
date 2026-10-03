@@ -16,6 +16,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QStandardPaths, QTimer, QUrl, Signal
 from PySide6.QtGui import QIcon
+from PySide6.QtNetwork import QNetworkCookie
 from PySide6.QtWebEngineCore import (
     QWebEngineProfile,
     QWebEnginePage,
@@ -204,6 +205,30 @@ class AuthService(QObject):
         self._info = {"logged_in": False}
         self._probe_loaded = False
         self.session_changed.emit(self._info)
+
+    def import_cookies(self, cookie_str: str) -> int:
+        """从浏览器复制的 Cookie 字符串导入（"k1=v1; k2=v2" 格式）。
+
+        用于 Google 封禁内嵌 WebView 登录时的兜底：用户在自己的浏览器
+        登录 suno.com 后，F12 -> 应用 -> Cookie 全量复制粘贴进来。
+        返回导入的 cookie 数量。
+        """
+        store = self.profile.cookieStore()
+        count = 0
+        for pair in cookie_str.split(";"):
+            name, sep, value = pair.partition("=")
+            name, value = name.strip(), value.strip()
+            if not sep or not name:
+                continue
+            cookie = QNetworkCookie(name.encode(), value.encode())
+            cookie.setDomain(".suno.com")
+            cookie.setPath("/")
+            store.setCookie(cookie, QUrl(SUNO_HOME))
+            count += 1
+        log.info("imported %d cookies", count)
+        self._probe_loaded = False
+        self.refresh_credits()
+        return count
 
     def refresh_credits(self) -> None:
         page = self._active_page()
