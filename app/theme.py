@@ -124,5 +124,16 @@ QPushButton#danger:hover {{ border-color: #E5534B; color: #E5534B; }}
     font-size: 15px;
 }}
 
+/* ---------- 日志页 ---------- */
+#logView {{
+    background: {BG_SIDEBAR};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+    color: {TEXT_DIM};
+    padding: 8px;
+}}
+
 QToolTip {{ background: {BG_CARD}; color: {TEXT}; border: 1px solid {BORDER}; }}
 """

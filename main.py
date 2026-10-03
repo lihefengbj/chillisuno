@@ -3,6 +3,7 @@ import sys
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from app.logger import setup_logging
 from app.main_window import MainWindow
 
 
@@ -11,6 +12,7 @@ def main() -> int:
     app.setApplicationName("chillisuno")
     app.setOrganizationName("chillisuno")
     app.setWindowIcon(QIcon("assets/icon.png"))
+    setup_logging()
     window = MainWindow()
     window.show()
     return app.exec()

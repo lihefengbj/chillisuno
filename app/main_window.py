@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QPlainTextEdit,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
@@ -15,6 +16,42 @@ from PySide6.QtWidgets import (
 
 from app.auth_service import AuthService
 from app import theme
+from app.logger import bus as log_bus
+
+
+class LogPage(QWidget):
+    MAX_LINES = 2000
+
+    def __init__(self) -> None:
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 28, 32, 28)
+        layout.setSpacing(12)
+
+        title = QLabel("日志")
+        title.setObjectName("pageTitle")
+        self.view = QPlainTextEdit()
+        self.view.setObjectName("logView")
+        self.view.setReadOnly(True)
+
+        clear_btn = QPushButton("清空")
+        clear_btn.clicked.connect(self.view.clear)
+
+        layout.addWidget(title)
+        layout.addWidget(self.view, 1)
+        layout.addWidget(clear_btn, 0, Qt.AlignmentFlag.AlignRight)
+
+        log_bus.record.connect(self._append)
+
+    def _append(self, level: str, message: str) -> None:
+        self.view.appendPlainText(f"[{level}] {message}")
+        doc = self.view.document()
+        while doc.blockCount() > self.MAX_LINES:
+            cursor = self.view.textCursor()
+            cursor.movePosition(cursor.MoveOperation.Start)
+            cursor.select(cursor.SelectionType.BlockUnderCursor)
+            cursor.removeSelectedText()
+            cursor.deleteChar()
 
 
 def _placeholder_page(text: str) -> QWidget:
@@ -71,7 +108,7 @@ class MainWindow(QMainWindow):
 
         nav = QListWidget()
         nav.setObjectName("nav")
-        for name in ("账户", "曲库", "下载中心", "上传", "设置"):
+        for name in ("账户", "曲库", "下载中心", "上传", "设置", "日志"):
             QListWidgetItem(name, nav)
         nav.setCurrentRow(0)
         nav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -87,6 +124,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(_placeholder_page("下载中心 · M3 开发中"))
         self.pages.addWidget(_placeholder_page("上传 · M4 开发中"))
         self.pages.addWidget(_placeholder_page("设置 · 待实现"))
+        self.pages.addWidget(LogPage())
 
         nav.currentRowChanged.connect(self.pages.setCurrentIndex)
 
