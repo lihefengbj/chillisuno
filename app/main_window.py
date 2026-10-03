@@ -223,12 +223,13 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(dlg)
         hint = QLabel(
             "适用于 Google 无法在内嵌窗口登录的情况。\n"
-            "注意：__session 是 HttpOnly，document.cookie 读不到，"
-            "必须从网络请求头复制：\n"
+            "注意：登录凭证都是 HttpOnly，必须从网络请求头复制，"
+            "且要复制发往 auth.suno.com 的请求（它才带完整的会话凭证）：\n"
             "1. 在常用浏览器中登录 suno.com 并保持在该页面\n"
-            "2. 按 F12 → 网络(Network) → 刷新页面\n"
-            "3. 任选一条发往 suno.com 的请求 → 标头(Headers) → "
-            "找到请求头 Cookie: → 复制整行值\n"
+            "2. 按 F12 → 网络(Network) → 筛选框输入 auth.suno.com → 刷新页面\n"
+            "   （没有请求出现就等约 1 分钟，Clerk 会定期发）\n"
+            "3. 点一条 v1/client 请求 → 标头(Headers) → 请求头 Cookie: "
+            "→ 复制整行值（应包含 __client 和 __session）\n"
             "4. 粘贴到下面，点击导入"
         )
         hint.setWordWrap(True)
@@ -239,10 +240,11 @@ class MainWindow(QMainWindow):
 
         def do_import() -> None:
             text = edit.toPlainText()
-            if "__session" not in text:
+            if "__client" not in text:
                 hint.setText(
-                    "⚠ 粘贴的内容中没有 __session（关键的登录凭证）。\n"
-                    "它很可能是 HttpOnly，请按上面步骤从网络请求头复制完整 Cookie。"
+                    "⚠ 粘贴的内容中没有 __client（长期会话凭证）。\n"
+                    "请确认复制的是发往 auth.suno.com 的 v1/client 请求的 "
+                    "Cookie 头（不是 suno.com 页面请求的）。"
                 )
                 return
             n = self.auth.import_cookies(text)
