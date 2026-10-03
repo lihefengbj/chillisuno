@@ -1,20 +1,26 @@
 """Suno 登录会话管理。
 
 内嵌 QWebEngineView 加载 suno.com，用户用官方页面完成 OAuth 登录。
-登录态由持久化 QWebEngineProfile 保持；登录状态与额度通过页面内的
-window.Clerk 会话令牌调用 studio-api.suno.ai 获得（与官网前端同链路）。
+登录态由持久化 QWebEngineProfile 保持。
 
-检测策略：登录窗口打开期间直接在窗口页面上检测（用户实际操作的就是
-这个页面，状态最准确）；窗口关闭后用后台探测页检测。
+会话令牌获取（2026-10-03 起改用此方案）：
+新版 Suno 页面不再暴露 window.Clerk，改为用 QWebEngineUrlRequestInterceptor
+拦截页面自身发往 studio-api.suno.ai 的请求，从请求头捕获 Authorization
+令牌（登录后页面自己会持续发 API 请求），再用该令牌在页面上下文中调用
+billing 接口获取额度。该方案完全跟随官网行为，不依赖页面全局对象。
 """
 
 import json
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QStandardPaths, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, Qt, QStandardPaths, QTimer, QUrl, Signal
 from PySide6.QtGui import QIcon
-from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
+from PySide6.QtWebEngineCore import (
+    QWebEngineProfile,
+    QWebEnginePage,
+    QWebEngineUrlRequestInterceptor,
+)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QDialog, QVBoxLayout
 
@@ -35,48 +41,56 @@ def _chrome_like_ua(profile: QWebEngineProfile) -> str:
     return re.sub(r"QtWebEngine/\S+\s*", "", profile.httpUserAgent())
 
 
-# 注意：QWebEnginePage.runJavaScript 不会等待 Promise 完成，
-# 因此分两段执行：_START 启动异步任务并把结果写入 window.__chilliResult，
-# 延迟后再用 _READ 读取。
-_START_SESSION_JS = (
+class TokenInterceptor(QWebEngineUrlRequestInterceptor):
+    """捕获发往 studio-api 的请求中的 Bearer 令牌。
+
+    注意：interceptRequest 运行在 IO 线程，不能触碰 UI；
+    通过信号（队列连接）把令牌交回主线程。
     """
+
+    tokenCaptured = Signal(str)
+
+    def interceptRequest(self, info) -> None:
+        if info.requestUrl().host() != "studio-api.suno.ai":
+            return
+        headers = info.httpHeaders()
+        auth = headers.value(b"Authorization") or headers.value(b"authorization")
+        if auth:
+            token = bytes(auth).decode(errors="replace").removeprefix("Bearer ")
+            if token:
+                self.tokenCaptured.emit(token)
+
+
+# 注意：QWebEnginePage.runJavaScript 不会等待 Promise 完成，
+# 因此分两段执行：启动任务把结果写入 window.__chilliResult，延迟后再读取。
+_START_BILLING_JS = """
 window.__chilliResult = null;
 (async () => {
-  const dbg = {url: location.href, title: document.title || "",
-               clerk: !!window.Clerk,
-               session: !!(window.Clerk && window.Clerk.session)};
+  const dbg = {url: location.href, title: document.title || ""};
   try {
     if (dbg.title.toLowerCase().includes("too many"))
       throw {rate_limited: true};
-    if (!dbg.session)
-      throw {reason: "no-clerk-session"};
-    const token = await window.Clerk.session.getToken();
-    if (!token)
-      throw {reason: "no-token"};
     const resp = await fetch("%s", {
-      headers: { "Authorization": "Bearer " + token }
+      headers: { "Authorization": "Bearer %s" }
     });
     if (!resp.ok)
-      throw {reason: "billing-http-" + resp.status, logged_in: true};
+      throw {reason: "billing-http-" + resp.status};
     const data = await resp.json();
     window.__chilliResult = JSON.stringify({
       logged_in: true,
       credits: data.total_credits_left ?? null,
-      email: (window.Clerk.user && window.Clerk.user.primaryEmailAddress
-              && window.Clerk.user.primaryEmailAddress.emailAddress) || null,
       dbg
     });
   } catch (e) {
     window.__chilliResult = JSON.stringify(Object.assign(
-      {logged_in: false, dbg}, (e && e.reason) ? e : {error: String(e)}));
+      {logged_in: false, dbg}, (e && (e.reason || e.rate_limited)) ? e
+                               : {error: String(e)}));
   }
 })();
 "started"
 """
-    % BILLING_API
-)
 
-_READ_SESSION_JS = "window.__chilliResult"
+_READ_RESULT_JS = "window.__chilliResult"
 
 
 class LoginDialog(QDialog):
@@ -111,6 +125,14 @@ class AuthService(QObject):
         self.profile.setHttpUserAgent(ua)
         log.info("UA: %s", ua)
 
+        # 请求拦截器：捕获 API 令牌
+        self._token: str | None = None
+        self._interceptor = TokenInterceptor(self)
+        self._interceptor.tokenCaptured.connect(
+            self._on_token, Qt.ConnectionType.QueuedConnection
+        )
+        self.profile.setUrlRequestInterceptor(self._interceptor)
+
         self._dialog: LoginDialog | None = None
         self._info: dict = {"logged_in": False}
         self._probe_loaded = False
@@ -119,7 +141,7 @@ class AuthService(QObject):
         self._probe = QWebEnginePage(self.profile, self)
         self._probe.loadFinished.connect(self._on_probe_loaded)
 
-        # 登录窗口打开期间轮询登录态（5s 一次，避免触发 Too Many Requests）
+        # 登录窗口打开期间轮询（5s 一次，避免触发 Too Many Requests）
         self._poll = QTimer(self)
         self._poll.setInterval(5000)
         self._poll.timeout.connect(self.refresh_credits)
@@ -147,25 +169,39 @@ class AuthService(QObject):
         log.info("logout")
         self.profile.cookieStore().deleteAllCookies()
         self.profile.clearHttpCache()
+        self._token = None
         self._info = {"logged_in": False}
         self._probe_loaded = False
         self.session_changed.emit(self._info)
 
     def refresh_credits(self) -> None:
+        if self._token is None:
+            # 还没有令牌：确保有页面在跑，让页面自己发 API 请求以便捕获
+            self._ensure_page()
+            if not self._info.get("logged_in"):
+                return
         page = self._active_page()
-        if page is None:
+        if page is None or self._token is None:
             return
-        page.runJavaScript(_START_SESSION_JS)
+        page.runJavaScript(_START_BILLING_JS % (BILLING_API, self._token))
         QTimer.singleShot(1500, lambda: self._read_result(page))
 
-    def _read_result(self, page: QWebEnginePage) -> None:
-        # 页面可能已跳转，读取时确认页面仍然有效
-        try:
-            page.runJavaScript(_READ_SESSION_JS, self._on_probe_result)
-        except RuntimeError:
-            pass
-
     # ---- 内部 ----
+
+    def _on_token(self, token: str) -> None:
+        if token != self._token:
+            log.info("captured api token (len=%d)", len(token))
+            self._token = token
+            if not self._info.get("logged_in"):
+                self._set_state({"logged_in": True, "credits": None})
+            self.refresh_credits()
+
+    def _ensure_page(self) -> None:
+        if self._dialog is not None and self._dialog.isVisible():
+            return
+        if not self._probe_loaded:
+            log.info("lazy-load probe page: %s/create", SUNO_HOME)
+            self._probe.load(QUrl(SUNO_HOME + "/create"))
 
     def _active_page(self) -> QWebEnginePage | None:
         """优先用登录窗口页面（用户实际操作页），否则用后台探测页。"""
@@ -173,13 +209,17 @@ class AuthService(QObject):
             url = self._dialog.view.url()
             if "suno.com" in url.host():
                 return self._dialog.view.page()
-            log.debug("login dialog page not on suno.com yet: %s", url.toString())
             return None
         if not self._probe_loaded:
-            log.info("lazy-load probe page: %s", SUNO_HOME)
-            self._probe.load(QUrl(SUNO_HOME + "/create"))
+            self._ensure_page()
             return None
         return self._probe
+
+    def _read_result(self, page: QWebEnginePage) -> None:
+        try:
+            page.runJavaScript(_READ_RESULT_JS, self._on_probe_result)
+        except RuntimeError:
+            pass
 
     def _on_probe_loaded(self, ok: bool) -> None:
         self._probe_loaded = True
@@ -196,40 +236,38 @@ class AuthService(QObject):
         )
 
     def _on_probe_result(self, raw) -> None:
-        log.debug("session probe raw: %s", raw)
+        log.debug("billing probe raw: %s", raw)
         try:
-            info = json.loads(raw) if raw else {"logged_in": False}
+            info = json.loads(raw) if raw else {}
         except (TypeError, json.JSONDecodeError):
             log.warning("probe result not JSON: %r", raw)
             return
 
         if info.get("rate_limited"):
-            # 命中 429 页面：30 秒后重新加载探测页
             log.warning("rate limited (429), backoff 30s")
             self._probe_loaded = False
             self._backoff.start()
-            info = {"logged_in": False}
-        elif not info.get("logged_in"):
-            log.info(
-                "not logged in: reason=%s dbg=%s",
-                info.get("reason"),
-                info.get("dbg"),
-            )
-        else:
-            log.info(
-                "logged in: email=%s credits=%s (billing reason=%s)",
-                info.get("email"),
-                info.get("credits"),
-                info.get("reason"),
-            )
+            return
+        if info.get("logged_in"):
+            log.info("credits=%s", info.get("credits"))
+            self._set_state({"logged_in": True, "credits": info.get("credits")})
+            if self._dialog and self._dialog.isVisible():
+                log.info("login confirmed, close dialog")
+                self._dialog.accept()
+        elif info.get("reason"):
+            # 令牌失效等
+            log.warning("billing failed: %s", info.get("reason"))
+            if str(info.get("reason", "")).endswith(("401", "403")):
+                self._token = None
+                self._set_state({"logged_in": False})
 
-        state = {k: info.get(k) for k in ("logged_in", "email", "credits")}
-        if state != self._info:
-            self._info = state
-            self.session_changed.emit(state)
-        if state.get("logged_in") and self._dialog and self._dialog.isVisible():
-            log.info("login detected, close dialog")
-            self._dialog.accept()
+    def _set_state(self, state: dict) -> None:
+        merged = {"logged_in": False, "email": None, "credits": None}
+        merged.update({k: v for k, v in state.items() if v is not None or k == "logged_in"})
+        merged = {k: merged.get(k) for k in ("logged_in", "email", "credits")}
+        if merged != self._info:
+            self._info = merged
+            self.session_changed.emit(merged)
 
     def _reload_probe(self) -> None:
         log.info("reload probe page after backoff")
