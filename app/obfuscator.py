@@ -10,6 +10,24 @@ import numpy as np
 import soundfile as sf
 
 
+def _read_audio(path: str | Path) -> tuple[np.ndarray, int]:
+    path = Path(path)
+    if path.suffix.lower() == ".mp3":
+        import miniaudio
+
+        decoded = miniaudio.decode_file(
+            str(path), output_format=miniaudio.SampleFormat.FLOAT32
+        )
+        samples = np.asarray(decoded.samples, dtype=np.float32).reshape(
+            decoded.num_frames, decoded.nchannels
+        )
+        return samples, int(decoded.sample_rate)
+    data, sr = sf.read(str(path), always_2d=True)
+    if data.dtype not in (np.float32, np.float64):
+        data = data.astype(np.float64) / float(np.iinfo(data.dtype).max)
+    return data, int(sr)
+
+
 STRENGTHS = {
     "关闭": 0,
     "低": 1,
@@ -57,7 +75,7 @@ def _fingerprint_bits(data: np.ndarray, sr: int) -> np.ndarray:
 
 
 def fingerprint(path: str | Path) -> bytes:
-    data, sr = sf.read(str(path), always_2d=True)
+    data, sr = _read_audio(path)
     bits = _fingerprint_bits(data, sr)
     if bits.size == 0:
         return b""
@@ -84,9 +102,7 @@ def process(src: str | Path, dst: str | Path, strength: int) -> Path:
     """按强度混淆，写出 WAV，返回目标路径。"""
     src = Path(src)
     dst = Path(dst)
-    data, sr = sf.read(str(src), always_2d=True)
-    if data.dtype not in (np.float32, np.float64):
-        data = data.astype(np.float64) / float(np.iinfo(data.dtype).max)
+    data, sr = _read_audio(src)
     if strength <= 0:
         sf.write(str(dst), data, sr, subtype="PCM_16")
         return dst

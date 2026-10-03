@@ -159,7 +159,7 @@ class UploadPage(QWidget):
         desc.setObjectName("pageDesc")
 
         file_row = QHBoxLayout()
-        self.file_label = QLabel("未选择文件（可拖拽音频到此处）")
+        self.file_label = QLabel("未选择文件（可拖拽 WAV/MP3/FLAC/OGG/AIFF）")
         self.file_label.setObjectName("pageDesc")
         choose_btn = QPushButton("选择文件")
         file_row.addWidget(self.file_label, 1)
@@ -197,7 +197,7 @@ class UploadPage(QWidget):
 
     def _choose_file(self) -> None:
         selected, _ = QFileDialog.getOpenFileName(
-            self, "选择音频", "", "音频 (*.wav *.flac *.ogg *.aiff)"
+            self, "选择音频", "", "音频 (*.wav *.mp3 *.flac *.ogg *.aiff)"
         )
         if selected:
             self._set_src(selected)
@@ -209,7 +209,7 @@ class UploadPage(QWidget):
     def dropEvent(self, event) -> None:
         for url in event.mimeData().urls():
             path = url.toLocalFile()
-            if path.lower().endswith((".wav", ".flac", ".ogg", ".aiff")):
+            if path.lower().endswith((".wav", ".mp3", ".flac", ".ogg", ".aiff")):
                 self._set_src(path)
                 break
 
