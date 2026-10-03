@@ -111,8 +111,14 @@ def process(src: str | Path, dst: str | Path, strength: int) -> Path:
 
     rng = np.random.default_rng()
 
-    # 1) 微变速：拉伸 0.2% * 强度
-    factor = 1.0 + 0.002 * strength
+    # 1) 音高平移：这是对抗"整曲指纹匹配"的关键一步。仅做 0.2% 变速
+    #    或轻微 EQ 对内容识别基本无效。
+    semitones = (0.0, 0.6, 1.5, 3.0)[min(strength, 3)]
+    if semitones > 0:
+        data = _pitch_shift(data, sr, 2 ** (semitones / 12.0))
+
+    # 2) 时域微变速：进一步破坏节拍/相位对齐
+    factor = 1.0 + 0.0015 * strength
     n_in = data.shape[0]
     n_out = int(n_in * factor)
     x_in = np.linspace(0.0, 1.0, n_in)
@@ -122,7 +128,12 @@ def process(src: str | Path, dst: str | Path, strength: int) -> Path:
         axis=1,
     )
 
-    # 2) 频域 EQ + 相位微扰
+    # 3) STFT 相位扰动：强度越高越明显，改变波形但保留大致频谱包络
+    if strength >= 2:
+        phase_sigma = (0.0, 0.0, 0.55, 1.25)[min(strength, 3)]
+        stretched = _stft_phase_jitter(stretched, sr, phase_sigma, rng)
+
+    # 4) 频域 EQ + 残留相位微扰
     n = stretched.shape[0]
     X = np.fft.rfft(stretched, axis=0)
     freqs = np.fft.rfftfreq(n, 1.0 / sr)
@@ -130,18 +141,78 @@ def process(src: str | Path, dst: str | Path, strength: int) -> Path:
         freqs / (sr / 2.0) * np.pi * (1.0 + 0.3 * strength)
     )
     X *= curve[:, None]
-    if strength >= 2:
-        phase = rng.normal(0.0, 0.008 * strength, X.shape)
+    if strength >= 3:
+        phase = rng.normal(0.0, 0.015 * strength, X.shape)
         X *= np.exp(1j * phase)
     stretched = np.fft.irfft(X, n=n, axis=0)
 
-    # 3) 低幅度噪声
+    # 5) 低幅度噪声
     scale = float(np.std(stretched) or 1.0)
     stretched += rng.normal(0.0, 0.00003 * strength * scale, stretched.shape)
 
-    # 4) 归一化并写 WAV
+    # 6) 归一化并写 WAV
     peak = float(np.max(np.abs(stretched)) or 1.0)
     if peak > 0.99:
         stretched *= 0.99 / peak
     sf.write(str(dst), stretched, sr, subtype="PCM_16")
     return dst
+
+
+def _pitch_shift(data: np.ndarray, sr: int, ratio: float) -> np.ndarray:
+    """无外部依赖的保时长音高平移。
+
+    先按 ratio 重采样内容，再映射回原时间轴，等效于把整段音频整体
+    移调，但时长保持不变。ratio > 1 表示升高音高。
+    """
+    if abs(ratio - 1.0) < 1e-6:
+        return data
+    n = data.shape[0]
+    work = data
+
+    # 升调时目标 Nyquist 会变低，先做简单 FFT 低通，减少混叠。
+    if ratio > 1.0:
+        X = np.fft.rfft(work, axis=0)
+        freqs = np.fft.rfftfreq(n, 1.0 / sr)
+        cutoff = sr / (2.0 * ratio) * 0.97
+        roll = np.clip((freqs - cutoff) / max(cutoff * 0.04, 1.0), 0.0, None)
+        mask = 1.0 / (1.0 + np.exp(roll))
+        X *= mask[:, None]
+        work = np.fft.irfft(X, n=n, axis=0)
+
+    idx = np.clip(np.arange(n) * ratio, 0.0, float(n - 1))
+    base = np.arange(n, dtype=np.float64)
+    shifted = np.stack(
+        [np.interp(idx, base, work[:, c]) for c in range(work.shape[1])],
+        axis=1,
+    )
+    return shifted.astype(np.float32)
+
+
+def _stft_phase_jitter(
+    data: np.ndarray, sr: int, sigma: float, rng: np.random.Generator
+) -> np.ndarray:
+    """对 STFT 相位加高斯抖动，保留幅度谱，主要破坏波形级指纹。"""
+    if sigma <= 0 or data.shape[0] < 2048:
+        return data
+
+    n_fft = 2048
+    hop = 512
+    win = np.hanning(n_fft)
+    out = np.zeros_like(data, dtype=np.float64)
+    norm = np.zeros(data.shape[0], dtype=np.float64)
+
+    for c in range(data.shape[1]):
+        sig = data[:, c]
+        pos = 0
+        while pos + n_fft <= data.shape[0]:
+            frame = sig[pos:pos + n_fft] * win
+            X = np.fft.rfft(frame)
+            mag = np.abs(X)
+            ang = np.angle(X) + rng.normal(0.0, sigma, mag.shape)
+            y = np.fft.irfft(mag * np.exp(1j * ang), n=n_fft)
+            out[pos:pos + n_fft, c] += y * win
+            norm[pos:pos + n_fft] += win * win
+            pos += hop
+
+    out /= np.maximum(norm[:, None], 1e-8)
+    return out.astype(np.float32)
