@@ -117,15 +117,32 @@ class SunoApi(QObject):
         if not cid:
             return None
         meta = clip.get("metadata") or {}
-        audio_url = clip.get("audio_url") or ""
-        # feed 里部分曲目的 audio_url 是 .../api/forbidden 占位符，
-        # 一律回退到 CDN 直链规则
-        if "forbidden" in audio_url or not audio_url:
-            audio_url = f"https://cdn1.suno.ai/{cid}.mp3"
+        # 真实音频在 media_urls（progressive 直链），audio_url 常为
+        # .../api/forbidden 占位符。优先选可播放的容器（mp3/aac），
+        # 否则退回第一个 progressive（m4a-opus，需 Chromium 播放）。
+        media_urls = clip.get("media_urls") or []
+        audio_url = ""
+        for m in media_urls:
+            if not isinstance(m, dict) or m.get("delivery") != "progressive":
+                continue
+            u = m.get("url") or ""
+            if not u:
+                continue
+            if not audio_url:
+                audio_url = u
+            ct = (m.get("content_type") or "").lower()
+            if "mp3" in ct or "aac" in ct or "m4a" in ct and "opus" not in ct:
+                audio_url = u
+                break
+        if not audio_url:
+            raw = clip.get("audio_url") or ""
+            if raw and "forbidden" not in raw:
+                audio_url = raw
         return {
             "id": cid,
             "title": clip.get("title") or "未命名",
             "audio_url": audio_url,
+            "media_urls": media_urls,
             "image_url": clip.get("image_url")
             or f"https://cdn2.suno.ai/image_{cid}.jpeg",
             "tags": meta.get("tags") or "",

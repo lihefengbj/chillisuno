@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
         self.auth.session_changed.connect(self._on_session_changed)
         self.storage = Storage()
         self.api = SunoApi(self.auth, self)
-        self.player = PlayerBar(self)
+        self.player = PlayerBar(self.auth.profile, self)
 
         # ---------- 侧边栏 ----------
         sidebar = QWidget()
