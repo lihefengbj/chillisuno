@@ -19,8 +19,7 @@ JWT 有有效期（约 1 分钟级），每次调用前重新走一遍该流程�
 
 > 备注：Chromium 请求拦截器会过滤 Authorization 头，无法在 Qt 侧
 > 直接捕获令牌，必须走页面内 JS。真实 API 域名为
-> `studio-api-prod.suno.com`（2026-10 实测），`studio-api.prod.suno.com`
-> 用于媒体流。
+> `studio-api-prod.suno.com`（2026-10 实测）。
 
 ## 接口清单（按里程碑使用）
 
@@ -37,15 +36,26 @@ JWT 有有效期（约 1 分钟级），每次调用前重新走一遍该流程�
 
 | 接口 | 说明 |
 |---|---|
-| `GET https://studio-api.suno.ai/api/feed/v2?...` | 作品列表（分页） |
-| `GET https://studio-api.suno.ai/api/clip/{id}` | 单曲详情（含音频/封面/歌词地址） |
+| `GET https://studio-api-prod.suno.com/api/feed/v2?page=N` | 作品列表（分页） |
+| `GET https://studio-api-prod.suno.com/api/clip/{id}` | 单曲详情（含音频/封面/歌词地址） |
 
-播放地址通常为 `cdn1.suno.ai/{id}.mp3`。
+新版曲库中 `audio_url` 为 `.../api/forbidden` 占位符，真实音频在
+`media_urls[].url`，是 **AES 加密的 m4a-opus**。播放需解密：
+
+1. `POST https://studio-api-prod.suno.com/api/mango/rights`
+   body: `{"content_params":{"content_id":"{clipId}","content_type":"clip"}}`
+   → 返回 `{key, iv}`
+2. `userKey = SHA-256(Clerk JWT)`（AES-GCM）
+3. 用 AES-GCM(`additionalData=clipId`) 解开 key/iv
+4. 下载 `media_urls[].url`，AES-CTR 解密整段（counter=16B，
+   IV 取解出 iv 的前 12 字节）
+5. 结果 Blob URL 交给 HTMLAudioElement 播放
 
 ### M3 下载
 
-下载不走接口：拿到 CDN 地址后用 requests 直接下载，支持并发与断点续传。
-MP3 为默认；WAV 需官网转换接口（M3 期间核实）。
+下载可复用 `mango/rights` 解密字节直接落盘；MP3/WAV 走官网下载接口
+（M3 期间核实，见 BetterSuno 参考的 `/api/gen/{id}/wav_file/` 与
+`/api/download/clip/{id}?format=...`）。
 
 ### M4 上传
 
