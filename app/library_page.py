@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -43,8 +44,16 @@ class ClipCard(QFrame):
         info.setSpacing(2)
         title = QLabel(clip["title"])
         title.setObjectName("clipTitle")
+        title.setWordWrap(True)
+        title.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         tags = QLabel(clip["tags"] or " ")
         tags.setObjectName("clipTags")
+        tags.setWordWrap(True)
+        tags.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         info.addWidget(title)
         info.addWidget(tags)
 
