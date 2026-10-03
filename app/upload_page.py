@@ -214,6 +214,7 @@ class UploadPage(QWidget):
             self._append_log("请先选择并处理音频")
             return
         self.upload_btn.setEnabled(False)
+        self._append_log(f"准备上传：{file_path}")
         self._append_log("获取上传授权")
         ext = Path(file_path).suffix.lstrip(".").lower() or "wav"
         self._upload_filename = Path(file_path).name
