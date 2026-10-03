@@ -40,10 +40,16 @@ true
 
 def _play_js(url: str) -> str:
     return (
-        "(function(){var a=window.__chilliAudio;window.__chilliPerr=null;"
+        "(function(){var a=window.__chilliAudio;"
+        "var g=(window.__chilliGen=(window.__chilliGen||0)+1);"
+        "window.__chilliPerr=null;window.__chilliPlaying=false;"
         "a.pause();a.src=%s;a.load();"
-        "a.play().then(function(){window.__chilliStarted=true;})"
-        ".catch(function(e){window.__chilliPerr=String(e);});})();true"
+        "var p=a.play();"
+        "if(p!==undefined){p.then(function(){"
+        "if(g===window.__chilliGen){window.__chilliPlaying=true;window.__chilliPerr=null;}})"
+        ".catch(function(e){"
+        "if(g===window.__chilliGen){window.__chilliPerr=String(e);window.__chilliPlaying=false;}});}"
+        "return true;})();"
         % json.dumps(url)
     )
 
