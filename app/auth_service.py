@@ -6,6 +6,7 @@ window.Clerk 会话令牌调用 studio-api.suno.ai 获得（与官网前端同�
 """
 
 import json
+import re
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QStandardPaths, QTimer, QUrl, Signal
@@ -17,12 +18,16 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout
 SUNO_HOME = "https://suno.com"
 BILLING_API = "https://studio-api.suno.ai/api/billing/info/"
 
-# 使用真实 Chrome UA：QtWebEngine 默认 UA 带标识，易被限流/风控
-CHROME_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/126.0.0.0 Safari/537.36"
-)
+
+def _chrome_like_ua(profile: QWebEngineProfile) -> str:
+    """取 QtWebEngine 真实 UA，仅移除 QtWebEngine 标识。
+
+    保持 Chromium 版本号与内核一致——UA 与真实指纹不符会触发
+    Cloudflare Turnstile 反复人机验证。
+    """
+    # 默认 UA 形如 "... QtWebEngine/6.x Chrome/134.0.0.0 Safari/537.36"，
+    # 删掉 QtWebEngine 段即得到与内核一致的纯净 Chrome UA
+    return re.sub(r"QtWebEngine/\S+\s*", "", profile.httpUserAgent())
 
 # 在 suno.com 页面上下文中执行：取 Clerk 会话令牌 -> 拉取账单/额度信息。
 # 结果 JSON 序列化后返回给 Python。
@@ -81,7 +86,7 @@ class AuthService(QObject):
         self.profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
         )
-        self.profile.setHttpUserAgent(CHROME_UA)
+        self.profile.setHttpUserAgent(_chrome_like_ua(self.profile))
         self._dialog: LoginDialog | None = None
         self._info: dict = {"logged_in": False}
         self._probe_loaded = False
