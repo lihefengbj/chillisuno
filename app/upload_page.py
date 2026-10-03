@@ -89,6 +89,8 @@ class S3UploadWorker(QThread):
 
 
 class UploadPage(QWidget):
+    clip_initialized = Signal(str)
+
     def __init__(self, api, parent=None) -> None:
         super().__init__(parent)
         self.api = api
@@ -293,14 +295,46 @@ class UploadPage(QWidget):
             return
         status = payload.get("status")
         if status == "complete":
-            self._append_log(f"上传成功：{payload}")
-            self.upload_btn.setEnabled(True)
+            # 上传处理完成只是素材就绪，还要 initialize-clip 才会在曲库
+            # 生成真正的 clip，否则刷新曲库看不到这条上传。
+            self._append_log("素材处理完成，正在初始化曲库条目…")
+            self._initialize_clip()
             return
         if status in ("failed", "error"):
             self._fail_upload(f"上传处理失败：{payload}")
             return
         self._poll_attempt += 1
         QTimer.singleShot(2000, self._poll)
+
+    def _initialize_clip(self) -> None:
+        self.api.request_json(
+            "POST",
+            f"{API_BASE}/api/uploads/audio/{self._upload_id}/initialize-clip",
+            {},
+            self._on_clip_init,
+        )
+
+    def _on_clip_init(self, resp: dict) -> None:
+        if not resp.get("ok"):
+            self._fail_upload(
+                f"initialize-clip 失败 HTTP {resp.get('status')} "
+                f"{resp.get('text','')[:200]}"
+            )
+            return
+        try:
+            payload = json.loads(resp.get("text") or "{}")
+        except json.JSONDecodeError:
+            self._fail_upload(
+                f"initialize-clip 响应不是 JSON：{resp.get('text','')[:200]}"
+            )
+            return
+        clip_id = payload.get("clip_id")
+        if not clip_id:
+            self._fail_upload(f"initialize-clip 缺少 clip_id：{payload}")
+            return
+        self._append_log(f"上传成功：clip_id={clip_id}")
+        self.clip_initialized.emit(clip_id)
+        self.upload_btn.setEnabled(True)
 
     def _fail_upload(self, error: str) -> None:
         self._append_log(f"上传失败：{error}")

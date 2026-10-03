@@ -140,6 +140,9 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.download_page)
         self.upload_page = UploadPage(self.api)
         self.pages.addWidget(self.upload_page)
+        self.upload_page.clip_initialized.connect(
+            lambda _clip_id: self.library_page.reload()
+        )
         self.pages.addWidget(_placeholder_page("设置 · 待实现"))
         self.pages.addWidget(LogPage())
 

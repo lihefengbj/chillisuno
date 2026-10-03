@@ -65,6 +65,7 @@ JWT 有有效期（约 1 分钟级），每次调用前重新走一遍该流程�
 | `POST {fields.url}` | multipart/form-data 上传文件到 Suno S3（fields + file） |
 | `POST .../api/uploads/audio/{id}/upload-finish` | 通知上传完成 |
 | `GET .../api/uploads/audio/{id}` | 轮询处理状态到 `complete` |
+| `POST .../api/uploads/audio/{id}/initialize-clip` | 初始化 clip（返回 `clip_id`），曲库才会出现该条目 |
 
 上传前经过本地混淆管道（见 roadmap M4）。
 
