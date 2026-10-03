@@ -70,18 +70,35 @@ class SunoApi(QObject):
     def _fetch(self, url: str, callback) -> None:
         page = self.auth.acquire_page()
         if page is None:
-            log.warning("no active page for api call")
-            self.fetch_failed.emit("no-page")
+            # 探测页尚未加载：稍后重试，而不是立即失败
+            log.info("page not ready, retry in 800ms")
+            QTimer.singleShot(800, lambda: self._fetch(url, callback))
             return
         log.info("fetch %s", url)
         page.runJavaScript(_START_FETCH_JS % (CLERK_CLIENT_API, url))
-        QTimer.singleShot(2500, lambda: self._read(page, callback))
+        self._wait_result(page, callback, 0)
 
-    def _read(self, page, callback) -> None:
+    def _wait_result(self, page, callback, n: int) -> None:
+        if n > 20:  # 20 * 500ms = 10s 超时
+            log.warning("fetch timeout")
+            self.fetch_failed.emit("timeout")
+            return
+
+        def read(raw) -> None:
+            # window.__chilliApi 尚未就绪时为 null / 空串
+            if raw in (None, "", "null"):
+                QTimer.singleShot(
+                    500, lambda: self._wait_result(page, callback, n + 1)
+                )
+            else:
+                callback(raw)
+
         try:
-            page.runJavaScript(_READ_JS, callback)
+            page.runJavaScript(_READ_JS, read)
         except RuntimeError:
-            pass
+            QTimer.singleShot(
+                500, lambda: self._wait_result(page, callback, n + 1)
+            )
 
     def _on_feed_raw(self, raw) -> None:
         log.debug("feed raw len=%s", len(raw) if raw else 0)

@@ -48,7 +48,10 @@ class ClipCard(QFrame):
         info.addWidget(title)
         info.addWidget(tags)
 
-        dur = int(clip.get("duration") or 0)
+        try:
+            dur = int(float(clip.get("duration") or 0))
+        except (TypeError, ValueError):
+            dur = 0
         dur_label = QLabel(f"{dur // 60}:{dur % 60:02d}" if dur else "")
         dur_label.setObjectName("clipTags")
 
@@ -122,9 +125,14 @@ class LibraryPage(QWidget):
         self.api.fetch_feed()
 
     def _on_feed(self, clips: list) -> None:
+        log.info("on_feed: %d clips", len(clips))
         self._clips = clips
         self.status.setText(f"共 {len(clips)} 首（双击播放）")
-        self._render()
+        try:
+            self._render()
+            log.info("render done, list=%d", self.list.count())
+        except Exception:
+            log.exception("render failed")
 
     def _on_fail(self, reason: str) -> None:
         self.status.setText(f"加载失败：{reason}")
@@ -154,6 +162,7 @@ class LibraryPage(QWidget):
                 )
             )
             self._load_cover(card)
+        self.list.viewport().update()
 
     def _load_cover(self, card: ClipCard) -> None:
         url = card.clip.get("image_url")
