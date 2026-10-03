@@ -35,6 +35,7 @@ STRENGTHS = {
     "低": 1,
     "中": 2,
     "高": 3,
+    "实验": 4,
 }
 
 
@@ -110,6 +111,15 @@ def process(src: str | Path, dst: str | Path, strength: int) -> Path:
         return dst
 
     rng = np.random.default_rng()
+
+    # 实验模式：面向 ACRCloud 的强破坏。听感会明显下降，不保证通过。
+    if strength >= 4:
+        transformed = _experimental_transform(data, sr, rng)
+        peak = float(np.max(np.abs(transformed)) or 1.0)
+        if peak > 0.99:
+            transformed *= 0.99 / peak
+        sf.write(str(dst), transformed, sr, subtype="PCM_16")
+        return dst
 
     # 1) 音高平移：这是对抗"整曲指纹匹配"的关键一步。仅做 0.2% 变速
     #    或轻微 EQ 对内容识别基本无效。
@@ -215,4 +225,95 @@ def _stft_phase_jitter(
             pos += hop
 
     out /= np.maximum(norm[:, None], 1e-8)
+    return out.astype(np.float32)
+
+
+def _experimental_transform(
+    data: np.ndarray, sr: int, rng: np.random.Generator
+) -> np.ndarray:
+    """实验性强破坏：非均匀变调 + 频谱峰抹平 + 回声 + 颤音。
+
+    每一步都尽量打散局部时频峰值，代价是音质明显失真。
+    """
+    # 1) 分段随机变调：每 0.6 秒在约 -5~+5 半音间随机移调。
+    seg_len = max(int(sr * 0.6), 2048)
+    n = data.shape[0]
+    out = np.empty_like(data, dtype=np.float32)
+    pos = 0
+    while pos < n:
+        end = min(pos + seg_len, n)
+        ratio = float(2 ** (rng.uniform(-5.0, 5.0) / 12.0))
+        out[pos:end] = _pitch_shift(data[pos:end], sr, ratio)
+        pos = end
+
+    # 2) STFT：平滑幅度谱峰值，并加较大相位抖动。
+    out = _stft_smear(out, sr, rng, smooth=7, phase_sigma=1.6)
+
+    # 3) 多回声 + 轻颤音，破坏节奏和时间轴对齐。
+    out = _echoes(out, sr, rng)
+    t = np.arange(out.shape[0], dtype=np.float64) / sr
+    trem_freq = float(rng.uniform(2.5, 6.0))
+    depth = float(rng.uniform(0.18, 0.32))
+    mod = 1.0 + depth * np.sin(
+        2.0 * np.pi * trem_freq * t + float(rng.uniform(0.0, np.pi))
+    )
+    out = (out * mod[:, None]).astype(np.float32)
+
+    # 4) 低幅度宽带噪声，进一步破坏指纹底噪。
+    scale = float(np.std(out) or 1.0)
+    out = out + rng.normal(0.0, 0.0008 * scale, out.shape).astype(np.float32)
+    return out
+
+
+def _stft_smear(
+    data: np.ndarray,
+    sr: int,
+    rng: np.random.Generator,
+    smooth: int = 7,
+    phase_sigma: float = 1.6,
+) -> np.ndarray:
+    """对 STFT 幅度做频率方向平滑，并随机化相位。"""
+    n_fft = 2048
+    hop = 512
+    win = np.hanning(n_fft)
+    kernel = np.hanning(2 * smooth + 1)
+    kernel /= kernel.sum()
+
+    out = np.zeros_like(data, dtype=np.float64)
+    norm = np.zeros(data.shape[0], dtype=np.float64)
+
+    for c in range(data.shape[1]):
+        sig = data[:, c]
+        pos = 0
+        while pos + n_fft <= data.shape[0]:
+            frame = sig[pos:pos + n_fft] * win
+            X = np.fft.rfft(frame)
+            mag = np.abs(X)
+            # 频率方向抹平：把尖锐的谱峰分散开，削弱局部峰哈希
+            mag_smoothed = np.convolve(mag, kernel, mode="same")
+            ang = np.angle(X) + rng.normal(0.0, phase_sigma, mag.shape)
+            y = np.fft.irfft(mag_smoothed * np.exp(1j * ang), n=n_fft)
+            out[pos:pos + n_fft, c] += y * win
+            norm[pos:pos + n_fft] += win * win
+            pos += hop
+
+    out /= np.maximum(norm[:, None], 1e-8)
+    return out.astype(np.float32)
+
+
+def _echoes(
+    data: np.ndarray, sr: int, rng: np.random.Generator, count: int = 5
+) -> np.ndarray:
+    """随机短延迟回声，破坏节奏指纹的时间偏移关系。"""
+    out = data.astype(np.float64)
+    n = data.shape[0]
+    for _ in range(count):
+        delay = int(rng.integers(int(sr * 0.04), max(int(sr * 0.30), 1)))
+        if delay >= n:
+            continue
+        gain = float(rng.uniform(0.12, 0.40))
+        out[delay:] += data[:-delay] * gain
+    peak = float(np.max(np.abs(out)) or 1.0)
+    if peak > 0.99:
+        out *= 0.99 / peak
     return out.astype(np.float32)
