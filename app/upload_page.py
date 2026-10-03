@@ -170,7 +170,7 @@ class UploadPage(QWidget):
         self._src = path
         self._processed = None
         self.file_label.setText(path)
-        self.upload_btn.setEnabled(False)
+        self.upload_btn.setEnabled(True)
         self._append_log(f"已选择：{path}")
 
     # ---- 混淆 ----
