@@ -101,6 +101,11 @@ class SunoApi(QObject):
             log.warning("feed unexpected shape: %s", type(data))
             self.fetch_failed.emit("unexpected-shape")
             return
+        if clips:
+            log.info(
+                "first clip raw: %s",
+                json.dumps(clips[0], ensure_ascii=False)[:2000],
+            )
         result = [self._normalize(c) for c in clips if isinstance(c, dict)]
         result = [c for c in result if c]
         log.info("feed loaded: %d clips", len(result))
