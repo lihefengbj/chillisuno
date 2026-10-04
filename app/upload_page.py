@@ -1,4 +1,4 @@
-"""上传页：本地音频混淆预处理 + 上传到 Suno。
+"""上传页：本地音频同音替换预处理 + 上传到 Suno。
 
 Suno API 的 JSON 调用通过 QWebEngine 页面上下文执行（Python TLS 会被拦截），
 只有 S3 multipart 上传在 Python 线程里用 requests 完成。
@@ -38,6 +38,8 @@ UA = (
 
 
 class ObfuscateWorker(QThread):
+    """后台同音替换：相位替换 + 幅度微扰，听感与原音频高度相似。"""
+
     done = Signal(str)
     failed = Signal(str)
 
@@ -128,6 +130,14 @@ class UploadPage(QWidget):
         self._upload_id: str | None = None
         self._upload_filename: str | None = None
         self._poll_attempt = 0
+        self._retry_count = 0
+        self._auto_upload = False
+        self._batch_queue: list[str] = []
+        self._batch_active = False
+        self._batch_total = 0
+        self._batch_done = 0
+        self._batch_strength_label = "强对抗"
+        self._prev_strength_label = "低"
 
         self.setAcceptDrops(True)
 
@@ -137,7 +147,7 @@ class UploadPage(QWidget):
 
         title = QLabel("上传")
         title.setObjectName("pageTitle")
-        desc = QLabel("选择本地音频，先做混淆预处理，再上传到 Suno")
+        desc = QLabel("选择本地音频，先做同音替换预处理，再上传到 Suno")
         desc.setObjectName("pageDesc")
 
         file_row = QHBoxLayout()
@@ -148,11 +158,11 @@ class UploadPage(QWidget):
         file_row.addWidget(choose_btn)
 
         opt_row = QHBoxLayout()
-        opt_row.addWidget(QLabel("混淆强度"))
+        opt_row.addWidget(QLabel("替换强度"))
         self.strength = QComboBox()
         self.strength.addItems(list(STRENGTHS.keys()))
         self.strength.setCurrentText("低")
-        self.process_btn = QPushButton("混淆处理")
+        self.process_btn = QPushButton("同音替换")
         self.process_btn.setObjectName("primary")
         self.upload_btn = QPushButton("上传到 Suno")
         opt_row.addWidget(self.strength)
@@ -171,6 +181,30 @@ class UploadPage(QWidget):
         slice_row.addWidget(self.slice_sec)
         slice_row.addStretch(1)
 
+        retry_row = QHBoxLayout()
+        self.retry_enabled = QCheckBox("内容检测命中时自动重新混淆并重传")
+        self.retry_enabled.setChecked(True)
+        self.retry_max = QSpinBox()
+        self.retry_max.setRange(1, 10)
+        self.retry_max.setValue(3)
+        self.retry_max.setSuffix(" 次")
+        retry_row.addWidget(self.retry_enabled)
+        retry_row.addWidget(QLabel("最多"))
+        retry_row.addWidget(self.retry_max)
+        retry_row.addStretch(1)
+
+        batch_row = QHBoxLayout()
+        self.batch_add_btn = QPushButton("批量添加文件")
+        self.batch_clear_btn = QPushButton("清空队列")
+        self.batch_start_btn = QPushButton("开始批量（强对抗+自动重试）")
+        self.batch_start_btn.setObjectName("primary")
+        self.batch_label = QLabel("队列：0 个文件")
+        self.batch_label.setObjectName("pageDesc")
+        batch_row.addWidget(self.batch_add_btn)
+        batch_row.addWidget(self.batch_clear_btn)
+        batch_row.addWidget(self.batch_start_btn)
+        batch_row.addWidget(self.batch_label, 1)
+
         self.log_view = QTextEdit()
         self.log_view.setObjectName("logView")
         self.log_view.setReadOnly(True)
@@ -180,16 +214,24 @@ class UploadPage(QWidget):
         layout.addLayout(file_row)
         layout.addLayout(opt_row)
         layout.addLayout(slice_row)
+        layout.addLayout(retry_row)
+        layout.addLayout(batch_row)
         layout.addWidget(self.log_view, 1)
 
         choose_btn.clicked.connect(self._choose_file)
-        self.process_btn.clicked.connect(self._process)
+        self.process_btn.clicked.connect(lambda: self._process(auto=False))
         self.upload_btn.clicked.connect(self._upload)
         self.upload_btn.setEnabled(False)
+        self.batch_add_btn.clicked.connect(self._batch_add_files)
+        self.batch_clear_btn.clicked.connect(self._batch_clear)
+        self.batch_start_btn.clicked.connect(self._batch_start)
 
     # ---- 文件 ----
 
     def _choose_file(self) -> None:
+        if self._batch_active:
+            self._append_log("批量任务进行中，请等待完成后再选择文件")
+            return
         selected, _ = QFileDialog.getOpenFileName(
             self, "选择音频", "", "音频 (*.wav *.mp3 *.flac *.ogg *.aiff)"
         )
@@ -201,32 +243,53 @@ class UploadPage(QWidget):
             event.acceptProposedAction()
 
     def dropEvent(self, event) -> None:
-        for url in event.mimeData().urls():
-            path = url.toLocalFile()
-            if path.lower().endswith((".wav", ".mp3", ".flac", ".ogg", ".aiff")):
-                self._set_src(path)
-                break
+        paths = [
+            url.toLocalFile()
+            for url in event.mimeData().urls()
+            if url.toLocalFile().lower().endswith(
+                (".wav", ".mp3", ".flac", ".ogg", ".aiff")
+            )
+        ]
+        if not paths:
+            return
+        if len(paths) == 1:
+            self._set_src(paths[0])
+            return
+        for path in paths:
+            if path not in self._batch_queue:
+                self._batch_queue.append(path)
+        self._append_log(f"拖入 {len(paths)} 个文件，已加入批量队列（点“开始批量”）")
+        self._update_batch_label()
 
     def _set_src(self, path: str) -> None:
         self._src = path
         self._processed = None
         self._segments = []
         self._queue = []
+        self._retry_count = 0
+        self._auto_upload = False
         self.file_label.setText(path)
-        self.upload_btn.setEnabled(True)
+        self.upload_btn.setEnabled(not self._batch_active)
         self._append_log(f"已选择：{path}")
 
-    # ---- 混淆 ----
+    # ---- 同音替换 ----
 
-    def _process(self) -> None:
+    def _process(self, auto: bool = False) -> None:
         if not self._src:
             self._append_log("请先选择音频文件")
             return
+        if not auto:
+            if self._batch_active:
+                self._append_log("批量任务进行中，请等待完成后再手动处理")
+                return
+            # 手动处理：重置自动重试状态
+            self._retry_count = 0
+            self._auto_upload = False
         strength = STRENGTHS[self.strength.currentText()]
         dst = str(Path(self._src).with_suffix(".obf.wav"))
         self.process_btn.setEnabled(False)
         self.upload_btn.setEnabled(False)
-        self._append_log(f"开始混淆（强度={self.strength.currentText()}）")
+        self._append_log(f"开始同音替换（强度={self.strength.currentText()}）")
         self._obf_worker = ObfuscateWorker(self._src, dst, strength, self)
         self._obf_worker.done.connect(self._on_obf_done)
         self._obf_worker.failed.connect(self._on_obf_failed)
@@ -238,10 +301,23 @@ class UploadPage(QWidget):
         self._segments = []
         if self._src and Path(path).exists():
             sim = similarity(self._src, path)
-            self._append_log(f"混淆完成：{path}")
-            self._append_log(f"混淆前后指纹相似度：{sim}%")
+            self._append_log(f"同音替换完成：{path}")
+            self._append_log(f"替换前后指纹相似度：{sim}%")
+            tier = self.strength.currentText()
+            if sim >= 90.0:
+                self._append_log("✓ 听感与原音频高度相似")
+            elif tier in ("对抗", "对抗+", "强对抗", "强对抗+"):
+                self._append_log(
+                    f"ℹ 对抗档已做变速变调+合唱，相似度 {sim}% 属预期，可继续上传"
+                )
+            else:
+                self._append_log(f"⚠ 相似度 {sim}% 低于 90%，请检查原音频后重试")
             if self.slice_enabled.isChecked():
                 self._start_slice(path)
+            elif self._auto_upload:
+                self._auto_upload = False
+                self._append_log("自动上传混淆后的音频")
+                self._upload()
             else:
                 self.upload_btn.setEnabled(True)
 
@@ -262,12 +338,21 @@ class UploadPage(QWidget):
             self._append_log(f"切片完成：{len(self._segments)} 段")
         else:
             self._append_log("音频未超过设定时长，无需切片，将上传完整文件")
-        self.upload_btn.setEnabled(True)
+        if self._auto_upload:
+            self._auto_upload = False
+            self._append_log("自动上传混淆后的音频")
+            self._upload()
+        else:
+            self.upload_btn.setEnabled(True)
 
     def _on_slice_failed(self, error: str) -> None:
         self._segments = []
         self._append_log(f"切片失败：{error}（将回退为上传完整文件）")
-        self.upload_btn.setEnabled(True)
+        if self._auto_upload:
+            self._auto_upload = False
+            self._upload()
+        else:
+            self.upload_btn.setEnabled(True)
 
     def _on_slice_finished(self) -> None:
         if self._slice_worker:
@@ -275,7 +360,10 @@ class UploadPage(QWidget):
             self._slice_worker = None
 
     def _on_obf_failed(self, error: str) -> None:
-        self._append_log(f"混淆失败：{error}")
+        self._auto_upload = False
+        self._append_log(f"同音替换失败：{error}")
+        if self._batch_active:
+            self._on_batch_file_done(False)
 
     def _on_obf_finished(self) -> None:
         if self._obf_worker:
@@ -393,7 +481,7 @@ class UploadPage(QWidget):
             self._initialize_clip()
             return
         if status in ("failed", "error"):
-            self._fail_upload(f"上传处理失败：{payload}")
+            self._retry_or_fail(payload)
             return
         self._poll_attempt += 1
         QTimer.singleShot(2000, self._poll)
@@ -435,7 +523,10 @@ class UploadPage(QWidget):
             return
         if len(self._queue) > 1:
             self._append_log(f"全部 {len(self._queue)} 个切片上传完成")
-        self.upload_btn.setEnabled(True)
+        if self._batch_active:
+            self._on_batch_file_done(True)
+        else:
+            self.upload_btn.setEnabled(True)
 
     def _fail_upload(self, error: str) -> None:
         if len(self._queue) > 1:
@@ -443,7 +534,114 @@ class UploadPage(QWidget):
                 f"已上传 {self._queue_index}/{len(self._queue)} 个文件，本次已停止"
             )
         self._append_log(f"上传失败：{error}")
-        self.upload_btn.setEnabled(True)
+        if self._batch_active:
+            self._on_batch_file_done(False)
+        else:
+            self.upload_btn.setEnabled(True)
+
+    def _retry_or_fail(self, payload: dict) -> None:
+        """内容检测类失败时自动重新混淆（换随机种子）并重传。
+
+        Audible Magic / ACRCloud / 歌词版权检测对同一处理结果可能时过
+        时不过（随机相位/包络每次不同），自动重试能显著提高成功率。
+        """
+        error_type = payload.get("error_type", "") or ""
+        matchable = (
+            error_type.startswith("upload_failure_match")
+            or error_type == "upload_failure_lyrics_copyright"
+        )
+        if (
+            self.retry_enabled.isChecked()
+            and matchable
+            and self._retry_count < self.retry_max.value()
+        ):
+            self._retry_count += 1
+            self._append_log(
+                f"命中内容检测（{error_type}），自动重新混淆并重传"
+                f"（{self._retry_count}/{self.retry_max.value()}）"
+            )
+            self._auto_upload = True
+            self._process(auto=True)
+            return
+        self._fail_upload(f"上传处理失败：{payload}")
+
+    # ---- 批量 ----
+
+    def _batch_add_files(self) -> None:
+        selected, _ = QFileDialog.getOpenFileNames(
+            self, "批量选择音频", "", "音频 (*.wav *.mp3 *.flac *.ogg *.aiff)"
+        )
+        if not selected:
+            return
+        added = 0
+        for path in selected:
+            if path not in self._batch_queue:
+                self._batch_queue.append(path)
+                added += 1
+        self._append_log(f"批量队列新增 {added} 个文件")
+        self._update_batch_label()
+
+    def _batch_clear(self) -> None:
+        if self._batch_active:
+            self._append_log("批量任务进行中，无法清空队列")
+            return
+        count = len(self._batch_queue)
+        self._batch_queue = []
+        self._append_log(f"已清空批量队列（{count} 个文件）")
+        self._update_batch_label()
+
+    def _batch_start(self) -> None:
+        if self._batch_active:
+            self._append_log("批量任务已在进行中")
+            return
+        if not self._batch_queue:
+            self._append_log("批量队列为空，请先添加文件")
+            return
+        self._batch_active = True
+        self._batch_total = len(self._batch_queue)
+        self._batch_done = 0
+        self._prev_strength_label = self.strength.currentText()
+        self.batch_add_btn.setEnabled(False)
+        self.batch_clear_btn.setEnabled(False)
+        self.batch_start_btn.setEnabled(False)
+        self._append_log(
+            f"开始批量处理：共 {self._batch_total} 个文件"
+            f"（强度={self._batch_strength_label}，"
+            f"命中自动重试最多 {self.retry_max.value()} 次）"
+        )
+        self._batch_next()
+
+    def _batch_next(self) -> None:
+        if self._batch_queue:
+            path = self._batch_queue.pop(0)
+            self._append_log(
+                f"[批量 {self._batch_done + 1}/{self._batch_total}] 开始处理：{path}"
+            )
+            self.strength.setCurrentText(self._batch_strength_label)
+            self._set_src(path)
+            self._auto_upload = True
+            self._retry_count = 0
+            self._update_batch_label()
+            self._process(auto=True)
+            return
+        # 队列清空：批量结束
+        self._batch_active = False
+        self.strength.setCurrentText(self._prev_strength_label)
+        self.batch_add_btn.setEnabled(True)
+        self.batch_clear_btn.setEnabled(True)
+        self.batch_start_btn.setEnabled(True)
+        self._update_batch_label()
+        self._append_log(f"批量处理结束：共 {self._batch_total} 个文件")
+
+    def _on_batch_file_done(self, success: bool) -> None:
+        self._batch_done += 1
+        name = Path(self._src).name if self._src else "?"
+        mark = "✓ 成功" if success else "✗ 失败"
+        self._append_log(f"[批量 {self._batch_done}/{self._batch_total}] {mark}：{name}")
+        QTimer.singleShot(800, self._batch_next)
+
+    def _update_batch_label(self) -> None:
+        self.batch_label.setText(f"队列：{len(self._batch_queue)} 个文件")
 
     def _append_log(self, text: str) -> None:
         self.log_view.append(text)

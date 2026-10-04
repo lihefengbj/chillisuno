@@ -5,3 +5,4 @@ __pycache__/
 _preview.png
 dist/
 build/
+tools/_tmp_*.py
