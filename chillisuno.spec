@@ -5,11 +5,21 @@ import sys
 
 block_cipher = None
 
+# 把 imageio-ffmpeg 内置的静态 ffmpeg 可执行文件一并打包，
+# 使发布版无需系统安装 ffmpeg 即可输出 192kbps CBR MP3。
+_ffmpeg_datas = []
+try:
+    from PyInstaller.utils.hooks import collect_data_files
+
+    _ffmpeg_datas = collect_data_files("imageio_ffmpeg", include_py_files=False)
+except Exception:
+    _ffmpeg_datas = []
+
 a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=[],
-    datas=[("assets", "assets")],
+    datas=[("assets", "assets")] + _ffmpeg_datas,
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[],
