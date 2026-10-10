@@ -4,3 +4,4 @@ numpy>=1.26
 soundfile>=0.12
 miniaudio>=1.59
 requests>=2.31
+imageio-ffmpeg>=0.5

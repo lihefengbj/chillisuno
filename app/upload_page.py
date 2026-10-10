@@ -24,7 +24,14 @@ from PySide6.QtWidgets import (
 )
 
 from app.logger import get_logger
-from app.obfuscator import STRENGTHS, process, similarity, slice_audio
+from app.obfuscator import (
+    STRENGTHS,
+    STRENGTH_DESC,
+    get_last_mp3_encoder,
+    process,
+    similarity,
+    slice_audio,
+)
 
 log = get_logger("upload")
 
@@ -38,7 +45,7 @@ UA = (
 
 
 class ObfuscateWorker(QThread):
-    """后台同音替换：相位替换 + 幅度微扰，听感与原音频高度相似。"""
+    """后台同音替换：重叠分帧相位重排（OLA），听感不变、逐帧谱峰打乱。"""
 
     done = Signal(str)
     failed = Signal(str)
@@ -136,7 +143,7 @@ class UploadPage(QWidget):
         self._batch_active = False
         self._batch_total = 0
         self._batch_done = 0
-        self._batch_strength_label = "强对抗"
+        self._batch_strength_label = "中"
         self._prev_strength_label = "低"
 
         self.setAcceptDrops(True)
@@ -147,7 +154,7 @@ class UploadPage(QWidget):
 
         title = QLabel("上传")
         title.setObjectName("pageTitle")
-        desc = QLabel("选择本地音频，先做同音替换预处理，再上传到 Suno")
+        desc = QLabel("选择本地音频，先做同音替换预处理（听感不变、逐帧谱峰打乱），再上传到 Suno")
         desc.setObjectName("pageDesc")
 
         file_row = QHBoxLayout()
@@ -161,7 +168,7 @@ class UploadPage(QWidget):
         opt_row.addWidget(QLabel("替换强度"))
         self.strength = QComboBox()
         self.strength.addItems(list(STRENGTHS.keys()))
-        self.strength.setCurrentText("低")
+        self.strength.setCurrentText("中")
         self.process_btn = QPushButton("同音替换")
         self.process_btn.setObjectName("primary")
         self.upload_btn = QPushButton("上传到 Suno")
@@ -169,6 +176,10 @@ class UploadPage(QWidget):
         opt_row.addWidget(self.process_btn)
         opt_row.addWidget(self.upload_btn)
         opt_row.addStretch(1)
+
+        self.strength_desc = QLabel(STRENGTH_DESC.get(self.strength.currentText(), ""))
+        self.strength_desc.setObjectName("pageDesc")
+        self.strength_desc.setWordWrap(True)
 
         slice_row = QHBoxLayout()
         self.slice_enabled = QCheckBox("超长自动切片")
@@ -182,11 +193,11 @@ class UploadPage(QWidget):
         slice_row.addStretch(1)
 
         retry_row = QHBoxLayout()
-        self.retry_enabled = QCheckBox("内容检测命中时自动重新混淆并重传")
+        self.retry_enabled = QCheckBox("内容检测命中时自动提升强度并重传")
         self.retry_enabled.setChecked(True)
         self.retry_max = QSpinBox()
         self.retry_max.setRange(1, 10)
-        self.retry_max.setValue(3)
+        self.retry_max.setValue(5)
         self.retry_max.setSuffix(" 次")
         retry_row.addWidget(self.retry_enabled)
         retry_row.addWidget(QLabel("最多"))
@@ -196,7 +207,7 @@ class UploadPage(QWidget):
         batch_row = QHBoxLayout()
         self.batch_add_btn = QPushButton("批量添加文件")
         self.batch_clear_btn = QPushButton("清空队列")
-        self.batch_start_btn = QPushButton("开始批量（强对抗+自动重试）")
+        self.batch_start_btn = QPushButton("开始批量（中强度+自动重试）")
         self.batch_start_btn.setObjectName("primary")
         self.batch_label = QLabel("队列：0 个文件")
         self.batch_label.setObjectName("pageDesc")
@@ -213,12 +224,14 @@ class UploadPage(QWidget):
         layout.addWidget(desc)
         layout.addLayout(file_row)
         layout.addLayout(opt_row)
+        layout.addWidget(self.strength_desc)
         layout.addLayout(slice_row)
         layout.addLayout(retry_row)
         layout.addLayout(batch_row)
         layout.addWidget(self.log_view, 1)
 
         choose_btn.clicked.connect(self._choose_file)
+        self.strength.currentTextChanged.connect(self._on_strength_changed)
         self.process_btn.clicked.connect(lambda: self._process(auto=False))
         self.upload_btn.clicked.connect(self._upload)
         self.upload_btn.setEnabled(False)
@@ -227,6 +240,9 @@ class UploadPage(QWidget):
         self.batch_start_btn.clicked.connect(self._batch_start)
 
     # ---- 文件 ----
+
+    def _on_strength_changed(self, text: str) -> None:
+        self.strength_desc.setText(STRENGTH_DESC.get(text, ""))
 
     def _choose_file(self) -> None:
         if self._batch_active:
@@ -302,13 +318,15 @@ class UploadPage(QWidget):
         if self._src and Path(path).exists():
             sim = similarity(self._src, path)
             self._append_log(f"同音替换完成：{path}")
+            if Path(path).suffix.lower() == ".mp3":
+                self._append_log(f"MP3 编码：{get_last_mp3_encoder()}")
             self._append_log(f"替换前后指纹相似度：{sim}%")
             tier = self.strength.currentText()
             if sim >= 90.0:
                 self._append_log("✓ 听感与原音频高度相似")
-            elif tier in ("对抗", "对抗+", "强对抗", "强对抗+"):
+            elif tier in ("参照复刻", "音调偏移2.6", "音调偏移", "降调偏移", "音调偏移+", "内容对抗", "内容对抗+", "对抗", "对抗+", "强对抗", "强对抗+"):
                 self._append_log(
-                    f"ℹ 对抗档已做变速变调+合唱，相似度 {sim}% 属预期，可继续上传"
+                    f"ℹ {tier}档已做变调/变速/有损重编码处理，相似度 {sim}% 属预期，可继续上传"
                 )
             else:
                 self._append_log(f"⚠ 相似度 {sim}% 低于 90%，请检查原音频后重试")
@@ -540,10 +558,17 @@ class UploadPage(QWidget):
             self.upload_btn.setEnabled(True)
 
     def _retry_or_fail(self, payload: dict) -> None:
-        """内容检测类失败时自动重新混淆（换随机种子）并重传。
+        """内容检测类失败时自动换随机种子并逐次提升强度重传。
 
         Audible Magic / ACRCloud / 歌词版权检测对同一处理结果可能时过
-        时不过（随机相位/包络每次不同），自动重试能显著提高成功率。
+        时不过（随机相位/干涉/群延迟每次不同），自动重试能显著提高
+        成功率。每次重试按强度下拉框顺序提升一级：低→中→高→实验→
+        参照复刻→内容打散→内容打散+→音调偏移2.6→音调偏移→降调偏移
+        →音调偏移+→内容对抗→内容对抗+→对抗→…→强对抗+。参照复刻/
+        内容打散/内容打散+档听感与原音频一致；音调偏移类档位为保时长
+        变调（+2.6/+2.9/-2.9 半音，只变调不变速，已实测 +2.87 半音
+        过检）；内容对抗两档为干净升调加速；连续失手才进入更重的
+        变速合唱对抗档兜底。
         """
         error_type = payload.get("error_type", "") or ""
         matchable = (
@@ -556,8 +581,12 @@ class UploadPage(QWidget):
             and self._retry_count < self.retry_max.value()
         ):
             self._retry_count += 1
+            order = list(STRENGTHS.keys())
+            cur = order.index(self.strength.currentText())
+            nxt = order[min(len(order) - 1, cur + 1)]
+            self.strength.setCurrentText(nxt)
             self._append_log(
-                f"命中内容检测（{error_type}），自动重新混淆并重传"
+                f"命中内容检测（{error_type}），提升强度到 {nxt} 重新混淆并重传"
                 f"（{self._retry_count}/{self.retry_max.value()}）"
             )
             self._auto_upload = True

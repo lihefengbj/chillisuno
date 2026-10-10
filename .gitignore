@@ -6,3 +6,5 @@ _preview.png
 dist/
 build/
 tools/_tmp_*.py
+debug.log
+musics/
