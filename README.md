@@ -19,7 +19,7 @@ Python 3.12 + PySide6 (Qt6)，内嵌 QWebEngine (Chromium) 作为 Suno 接入引
 | [docs/API接口.md](docs/API接口.md) | Suno 非官方接口说明 |
 | [docs/UI设计.md](docs/UI设计.md) | UI 布局与页面设计 |
 | [docs/路线图.md](docs/路线图.md) | 里程碑计划 |
-| [docs/打包发布.md](docs/打包发布.md) | 双平台打包发布 |
+| [docs/打包发布.md](docs/打包发布.md) | Windows / macOS Intel 与 Apple Silicon 打包发布 |
 | [docs/进度.md](docs/进度.md) | 开发进度（每次代码变动后同步更新） |
 
 ## 运行

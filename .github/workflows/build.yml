@@ -14,8 +14,18 @@ jobs:
         include:
           - os: windows-latest
             platform: windows
-          - os: macos-latest
+            artifact: chillisuno-windows
+            package: chillisuno-windows.zip
+          - os: macos-15-intel
             platform: macos
+            arch: x86_64
+            artifact: chillisuno-macos-x86_64
+            package: chillisuno-macos-x86_64.dmg
+          - os: macos-26
+            platform: macos
+            arch: arm64
+            artifact: chillisuno-macos-arm64
+            package: chillisuno-macos-arm64.dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -55,6 +65,10 @@ jobs:
       - name: PyInstaller 打包
         run: pyinstaller --noconfirm chillisuno.spec
 
+      - name: 验证 macOS 构建架构
+        if: matrix.platform == 'macos'
+        run: lipo -verify_arch ${{ matrix.arch }} dist/chillisuno.app/Contents/MacOS/chillisuno
+
       - name: 打包 zip（Windows）
         if: matrix.platform == 'windows'
         run: Compress-Archive -Path dist\chillisuno -DestinationPath dist\chillisuno-windows.zip
@@ -63,16 +77,14 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           cd dist
-          hdiutil create -volname chillisuno -srcfolder chillisuno.app \
-            -ov -format UDZO chillisuno-macos.dmg
+          hdiutil create -volname chillisuno-${{ matrix.arch }} -srcfolder chillisuno.app \
+            -ov -format UDZO chillisuno-macos-${{ matrix.arch }}.dmg
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: chillisuno-${{ matrix.platform }}
-          path: |
-            dist/chillisuno-windows.zip
-            dist/chillisuno-macos.dmg
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.package }}
           if-no-files-found: error
 
   release:
