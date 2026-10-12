@@ -67,7 +67,7 @@ jobs:
 
       - name: 验证 macOS 构建架构
         if: matrix.platform == 'macos'
-        run: lipo -verify_arch ${{ matrix.arch }} dist/chillisuno.app/Contents/MacOS/chillisuno
+        run: lipo dist/chillisuno.app/Contents/MacOS/chillisuno -verify_arch ${{ matrix.arch }}
 
       - name: 打包 zip（Windows）
         if: matrix.platform == 'windows'
