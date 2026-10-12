@@ -24,12 +24,38 @@ Python 3.12 + PySide6 (Qt6)，内嵌 QWebEngine (Chromium) 作为 Suno 接入引
 
 ## 运行
 
+项目使用 Python 3.12；这是当前 CI 验证过的版本。更高版本尚未验证，建议使用 3.12。
+
+### 安装 Python
+
+从 [Python 官方下载页](https://www.python.org/downloads/) 安装 Python 3.12。安装完成后，在终端检查版本：
+
+- macOS：`python3 --version`
+- Windows：`py -3.12 --version`
+
+### macOS
+
+在项目根目录运行：
+
 ```bash
-python -m venv .venv
-.venv\Scripts\activate        # Windows（macOS: source .venv/bin/activate）
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 python main.py
 ```
+
+### Windows（PowerShell）
+
+在项目根目录运行：
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python main.py
+```
+
+激活成功后，命令行提示符会显示 `(.venv)`。以后再次运行项目时，先进入项目目录并激活虚拟环境；完成后可运行 `deactivate` 退出。
 
 ## 风险提示
 
